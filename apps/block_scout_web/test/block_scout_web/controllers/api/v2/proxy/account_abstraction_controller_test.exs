@@ -54,7 +54,7 @@ defmodule BlockScoutWeb.API.V2.Proxy.AccountAbstractionControllerTest do
       "fee" => "444912133813809",
       "consensus" => true,
       "timestamp" => "2025-09-15T13:52:12.000000Z",
-      "execute_target" => "0x47C4442562280196b54c640acD3AF9F45c981F0C",
+      "execute_target" => "0x06EE840642a33367ee59fCA237F270d5119d1356",
       "execute_call_data" =>
         "0x541c9e4e00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020c5561301aaa52dbc9fdcbf9fdae2ea1a929207270c909f2b6248a3bc80b042b2"
     }
