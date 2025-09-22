@@ -386,6 +386,7 @@ defmodule Explorer.Arbitrum.ClaimRollupMessage do
   #   call of a smart contract on L1)
   @spec obtain_token_withdrawal_data(binary()) ::
           %{
+            address_hash: Explorer.Chain.Hash.Address.t(),
             address: Explorer.Chain.Hash.Address.t(),
             destination: Explorer.Chain.Hash.Address.t(),
             amount: non_neg_integer(),
@@ -417,8 +418,8 @@ defmodule Explorer.Arbitrum.ClaimRollupMessage do
     token_info = ERC20.fetch_token_properties(ArbitrumRpc.value_to_address(token), json_l1_rpc_named_arguments)
 
     %{
-      address: token_bin,
-      destination: to_bin,
+      address_hash: token_bin,
+      destination_address_hash: to_bin,
       amount: amount,
       decimals: token_info.decimals,
       name: token_info.name,
@@ -502,7 +503,7 @@ defmodule Explorer.Arbitrum.ClaimRollupMessage do
   # Converts list of binaries into the hex-encoded 0x-prefixed strings
   defp raw_proof_to_hex(proof) do
     proof
-    |> Enum.map(fn p -> "0x" <> Base.encode16(p, case: :lower) end)
+    |> Enum.map(fn p -> %Data{bytes: p} |> to_string() end)
   end
 
   # Retrieves the size parameter (total count of L2->L1 messages) needed for outbox

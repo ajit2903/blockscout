@@ -171,14 +171,14 @@ defmodule Explorer.Chain.Address.CurrentTokenBalance do
   end
 
   @doc """
-  Builds an `t:Ecto.Query.t/0` to fetch the current token balances of the given address (include unfetched).
+  Builds an `t:Ecto.Query.t/0` to fetch the current token balances of the given addresses (include unfetched).
   """
-  def last_token_balances_include_unfetched(address_hash) do
+  def last_token_balances_include_unfetched(address_hashes) do
     fiat_balance = fiat_value_query()
 
     from(
       ctb in __MODULE__,
-      where: ctb.address_hash == ^address_hash,
+      where: ctb.address_hash in ^address_hashes,
       left_join: t in assoc(ctb, :token),
       on: ctb.token_contract_address_hash == t.contract_address_hash,
       preload: [token: t],
@@ -192,7 +192,7 @@ defmodule Explorer.Chain.Address.CurrentTokenBalance do
   """
   def last_token_balances(address_hash, type \\ [])
 
-  def last_token_balances(address_hash, [type | _]) do
+  def last_token_balances(address_hash, types) when is_list(types) and types != [] do
     fiat_balance = fiat_value_query()
 
     from(
@@ -202,7 +202,7 @@ defmodule Explorer.Chain.Address.CurrentTokenBalance do
       left_join: t in assoc(ctb, :token),
       on: ctb.token_contract_address_hash == t.contract_address_hash,
       preload: [token: t],
-      where: t.type == ^type,
+      where: t.type in ^types,
       select: ctb,
       select_merge: ^%{fiat_value: fiat_balance},
       order_by: ^[desc_nulls_last: fiat_balance],
@@ -334,7 +334,7 @@ defmodule Explorer.Chain.Address.CurrentTokenBalance do
   end
 
   @doc """
-  Converts CurrentTokenBalances to CSV format. Used in `BlockScoutWeb.API.V2.CSVExportController.export_token_holders/2`
+  Converts CurrentTokenBalances to CSV format. Used in `BlockScoutWeb.API.V2.CsvExportController.export_token_holders/2`
   """
   @spec to_csv_format([t()], Token.t()) :: (any(), any() -> {:halted, any()} | {:suspended, any(), (any() -> any())})
   def to_csv_format(holders, token) do

@@ -12,6 +12,8 @@ defmodule Explorer.Chain.Block.Reader.General do
 
   import Explorer.Chain, only: [select_repo: 1]
 
+  alias Explorer.Repo
+
   alias Explorer.Chain.{
     Block,
     BlockNumberHelper
@@ -91,6 +93,33 @@ defmodule Explorer.Chain.Block.Reader.General do
         block_number = get_block_number_based_on_closest(closest, timestamp, given_timestamp, number)
         {:ok, block_number}
     end
+  end
+
+  @doc """
+    Fetches timestamps by the given block numbers from the `blocks` database table and returns
+    a `block_number -> timestamp` map. The number of keys in resulting map can be less than the
+    number of the given block numbers.
+
+    ## Parameters
+    - `block_numbers`: The list of block numbers.
+
+    ## Returns
+    - The resulting `block_number -> timestamp` map. Can be empty map (%{}).
+  """
+  @spec timestamps_by_block_numbers([non_neg_integer()]) :: map()
+  def timestamps_by_block_numbers([]), do: %{}
+
+  def timestamps_by_block_numbers(block_numbers) when is_list(block_numbers) do
+    query =
+      from(
+        block in Block,
+        where: block.number in ^block_numbers and block.consensus == true,
+        select: {block.number, block.timestamp}
+      )
+
+    query
+    |> Repo.all()
+    |> Enum.into(%{})
   end
 
   # Builds a query to find consensus blocks either before or after a given timestamp
@@ -189,5 +218,67 @@ defmodule Explorer.Chain.Block.Reader.General do
           BlockNumberHelper.next_block_number(number)
         end
     end
+  end
+
+  @doc """
+  Filters the `base_query` to include only the records where the `block_number` falls within the specified period.
+
+  ## Parameters
+
+    - `base_query`: The initial query to be filtered.
+    - `from_block`: The starting block number of the period. Can be `nil`.
+    - `to_block`: The ending block number of the period. Can be `nil`.
+
+  ## Returns
+
+    - A query filtered by the specified block number period.
+
+  ## Examples
+
+    - When `from_block` is `nil` and `to_block` is not `nil`:
+      ```elixir
+      where_block_number_in_period(query, nil, 100)
+      # Filters the query to include records with block_number <= 100
+      ```
+
+    - When `from_block` is not `nil` and `to_block` is `nil`:
+      ```elixir
+      where_block_number_in_period(query, 50, nil)
+      # Filters the query to include records with block_number >= 50
+      ```
+
+    - When both `from_block` and `to_block` are `nil`:
+      ```elixir
+      where_block_number_in_period(query, nil, nil)
+      # Returns the base query without any filtering
+      ```
+
+    - When both `from_block` and `to_block` are not `nil`:
+      ```elixir
+      where_block_number_in_period(query, 50, 100)
+      # Filters the query to include records with block_number between 50 and 100 (inclusive)
+      ```
+  """
+  @spec where_block_number_in_period(Ecto.Query.t(), non_neg_integer() | nil, non_neg_integer() | nil) :: Ecto.Query.t()
+  def where_block_number_in_period(base_query, from_block, to_block) when is_nil(from_block) and not is_nil(to_block) do
+    from(q in base_query,
+      where: q.block_number <= ^to_block
+    )
+  end
+
+  def where_block_number_in_period(base_query, from_block, to_block) when not is_nil(from_block) and is_nil(to_block) do
+    from(q in base_query,
+      where: q.block_number >= ^from_block
+    )
+  end
+
+  def where_block_number_in_period(base_query, from_block, to_block) when is_nil(from_block) and is_nil(to_block) do
+    base_query
+  end
+
+  def where_block_number_in_period(base_query, from_block, to_block) do
+    from(q in base_query,
+      where: q.block_number >= ^from_block and q.block_number <= ^to_block
+    )
   end
 end

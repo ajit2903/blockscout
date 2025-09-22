@@ -5,7 +5,7 @@ defmodule BlockScoutWeb.AddressInternalTransactionControllerTest do
     only: [address_internal_transaction_path: 3, address_internal_transaction_path: 4]
 
   alias Explorer.Chain.{Address, Block, InternalTransaction, Transaction}
-  alias Explorer.ExchangeRates.Token
+  alias Explorer.Market.Token
 
   describe "GET index/3" do
     test "with invalid address hash", %{conn: conn} do
@@ -528,10 +528,10 @@ defmodule BlockScoutWeb.AddressInternalTransactionControllerTest do
 
       expected_response =
         address_internal_transaction_path(BlockScoutWeb.Endpoint, :index, address.hash, %{
-          "block_number" => number,
-          "index" => 11,
-          "transaction_index" => transaction_index,
-          "items_count" => "50"
+          block_number: number,
+          index: 11,
+          transaction_index: transaction_index,
+          items_count: "50"
         })
 
       assert expected_response == json_response(conn, 200)["next_page_path"]

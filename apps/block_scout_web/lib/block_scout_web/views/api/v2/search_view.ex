@@ -31,7 +31,7 @@ defmodule BlockScoutWeb.API.V2.SearchView do
       "type" => search_result.type,
       "name" => search_result.name,
       "symbol" => search_result.symbol,
-      "address" => search_result.address_hash,
+      "address_hash" => search_result.address_hash,
       "token_url" => token_path(Endpoint, :show, search_result.address_hash),
       "address_url" => address_path(Endpoint, :show, search_result.address_hash),
       "icon_url" => search_result.icon_url,
@@ -43,7 +43,8 @@ defmodule BlockScoutWeb.API.V2.SearchView do
         search_result.circulating_market_cap && to_string(search_result.circulating_market_cap),
       "is_verified_via_admin_panel" => search_result.is_verified_via_admin_panel,
       "certified" => search_result.certified || false,
-      "priority" => search_result.priority
+      "priority" => search_result.priority,
+      "reputation" => search_result.reputation
     }
   end
 
@@ -51,12 +52,13 @@ defmodule BlockScoutWeb.API.V2.SearchView do
     %{
       "type" => search_result.type,
       "name" => search_result.name,
-      "address" => search_result.address_hash,
+      "address_hash" => search_result.address_hash,
       "url" => address_path(Endpoint, :show, search_result.address_hash),
       "is_smart_contract_verified" => search_result.verified,
       "ens_info" => search_result[:ens_info],
       "certified" => if(search_result.certified, do: search_result.certified, else: false),
-      "priority" => search_result.priority
+      "priority" => search_result.priority,
+      "reputation" => search_result.reputation
     }
   end
 
@@ -65,12 +67,13 @@ defmodule BlockScoutWeb.API.V2.SearchView do
     %{
       "type" => search_result.type,
       "name" => search_result.name,
-      "address" => search_result.address_hash,
+      "address_hash" => search_result.address_hash,
       "url" => address_path(Endpoint, :show, search_result.address_hash),
       "is_smart_contract_verified" => search_result.verified,
       "ens_info" => search_result[:ens_info],
       "certified" => if(search_result.certified, do: search_result.certified, else: false),
-      "priority" => search_result.priority
+      "priority" => search_result.priority,
+      "reputation" => search_result.reputation
     }
   end
 
@@ -78,19 +81,18 @@ defmodule BlockScoutWeb.API.V2.SearchView do
     %{
       "type" => search_result.type,
       "name" => search_result.name,
-      "address" => search_result.address_hash,
+      "address_hash" => search_result.address_hash,
       "url" => address_path(Endpoint, :show, search_result.address_hash),
       "is_smart_contract_verified" => search_result.verified,
       "ens_info" => search_result[:ens_info],
       "certified" => if(search_result.certified, do: search_result.certified, else: false),
       "priority" => search_result.priority,
-      "metadata" => search_result.metadata
+      "metadata" => search_result.metadata,
+      "reputation" => search_result.reputation
     }
   end
 
   def prepare_search_result(%{type: "block"} = search_result) do
-    block_hash = hash_to_string(search_result.block_hash)
-
     {:ok, block} =
       Chain.hash_to_block(hash(search_result.block_hash),
         necessity_by_association: %{
@@ -102,8 +104,8 @@ defmodule BlockScoutWeb.API.V2.SearchView do
     %{
       "type" => search_result.type,
       "block_number" => search_result.block_number,
-      "block_hash" => block_hash,
-      "url" => block_path(Endpoint, :show, block_hash),
+      "block_hash" => block.hash,
+      "url" => block_path(Endpoint, :show, block.hash),
       "timestamp" => search_result.timestamp,
       "block_type" => block |> BlockView.block_type() |> String.downcase(),
       "priority" => search_result.priority
@@ -123,29 +125,37 @@ defmodule BlockScoutWeb.API.V2.SearchView do
   end
 
   def prepare_search_result(%{type: "user_operation"} = search_result) do
-    user_operation_hash = hash_to_string(search_result.user_operation_hash)
-
     %{
       "type" => search_result.type,
-      "user_operation_hash" => user_operation_hash,
+      "user_operation_hash" => hash_to_string(search_result.user_operation_hash),
       "timestamp" => search_result.timestamp,
       "priority" => search_result.priority
     }
   end
 
   def prepare_search_result(%{type: "blob"} = search_result) do
-    blob_hash = hash_to_string(search_result.blob_hash)
-
     %{
       "type" => search_result.type,
-      "blob_hash" => blob_hash,
+      "blob_hash" => hash_to_string(search_result.blob_hash),
       "timestamp" => search_result.timestamp,
       "priority" => search_result.priority
     }
   end
 
-  defp hash_to_string(%Hash{bytes: bytes}), do: hash_to_string(bytes)
-  defp hash_to_string(hash), do: "0x" <> Base.encode16(hash, case: :lower)
+  def prepare_search_result(%{type: "tac_operation"} = search_result) do
+    %{
+      "type" => search_result.type,
+      "tac_operation" => search_result.tac_operation,
+      "priority" => search_result.priority
+    }
+  end
+
+  defp hash_to_string(%Hash{} = hash), do: to_string(hash)
+
+  defp hash_to_string(bytes) do
+    {:ok, hash} = Hash.Full.cast(bytes)
+    to_string(hash)
+  end
 
   defp hash(%Hash{} = hash), do: hash
 

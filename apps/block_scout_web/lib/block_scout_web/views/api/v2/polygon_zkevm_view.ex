@@ -155,7 +155,7 @@ defmodule BlockScoutWeb.API.V2.PolygonZkevmView do
         "number" => batch.number,
         "status" => batch_status(batch),
         "timestamp" => batch.timestamp,
-        "transaction_count" => batch.l2_transactions_count,
+        "transactions_count" => batch.l2_transactions_count,
         "sequence_transaction_hash" => sequence_transaction_hash,
         "verify_transaction_hash" => verify_transaction_hash
       }

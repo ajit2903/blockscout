@@ -78,7 +78,7 @@ defmodule Explorer.Chain.Optimism.FrameSequence do
     frame_sequence_id = select_repo(options).one(query)
 
     if not is_nil(frame_sequence_id) do
-      batch_by_internal_id(frame_sequence_id, options)
+      batch_by_number(frame_sequence_id, options)
     end
   end
 
@@ -87,7 +87,7 @@ defmodule Explorer.Chain.Optimism.FrameSequence do
     op_frame_sequence_blobs DB tables by the internal id of the batch.
 
     ## Parameters
-    - `internal_id`: Batch'es internal id.
+    - `number`: Batch'es number.
     - `options`: A keyword list of options that may include whether to use a replica database
                  and/or whether to include blobs (true by default).
 
@@ -95,33 +95,33 @@ defmodule Explorer.Chain.Optimism.FrameSequence do
     - A map with info about L1 batch having the specified id.
     - nil if the batch is not found.
   """
-  @spec batch_by_internal_id(non_neg_integer(), list()) :: map() | nil
-  def batch_by_internal_id(internal_id, options \\ []) do
+  @spec batch_by_number(non_neg_integer(), list()) :: map() | nil
+  def batch_by_number(number, options \\ []) do
     query =
       from(fs in __MODULE__,
-        where: fs.id == ^internal_id and fs.view_ready == true
+        where: fs.id == ^number and fs.view_ready == true
       )
 
     batch = select_repo(options).one(query)
 
     if not is_nil(batch) do
-      l2_block_number_from = TransactionBatch.edge_l2_block_number(internal_id, :min)
-      l2_block_number_to = TransactionBatch.edge_l2_block_number(internal_id, :max)
-      transaction_count = Transaction.transaction_count_for_block_range(l2_block_number_from..l2_block_number_to)
+      l2_block_number_from = TransactionBatch.edge_l2_block_number(number, :min)
+      l2_block_number_to = TransactionBatch.edge_l2_block_number(number, :max)
+      transactions_count = Transaction.transaction_count_for_block_range(l2_block_number_from..l2_block_number_to)
 
       {batch_data_container, blobs} =
         if Keyword.get(options, :include_blobs?, true) do
-          FrameSequenceBlob.list(internal_id, options)
+          FrameSequenceBlob.list(number, options)
         else
           {nil, []}
         end
 
       result =
         prepare_base_info_for_batch(
-          internal_id,
+          number,
           l2_block_number_from,
           l2_block_number_to,
-          transaction_count,
+          transactions_count,
           batch_data_container,
           batch
         )
@@ -141,10 +141,10 @@ defmodule Explorer.Chain.Optimism.FrameSequence do
     includes basic batch information.
 
     ## Parameters
-    - `internal_id`: The internal ID of the batch.
+    - `number`: Number of the batch.
     - `l2_block_number_from`: Start L2 block number of the batch block range.
     - `l2_block_number_to`: End L2 block number of the batch block range.
-    - `transaction_count`: The L2 transaction count included into the blocks of the range.
+    - `transactions_count`: The L2 transaction count included into the blocks of the range.
     - `batch_data_container`: Designates where the batch info is stored: :in_blob4844, :in_celestia, or :in_calldata.
                               Can be `nil` if the container is unknown.
     - `batch`: Either an `Explorer.Chain.Optimism.FrameSequence` entry or a map with
@@ -162,28 +162,28 @@ defmodule Explorer.Chain.Optimism.FrameSequence do
           __MODULE__.t()
           | %{:l1_timestamp => DateTime.t(), :l1_transaction_hashes => list(), optional(any()) => any()}
         ) :: %{
-          :internal_id => non_neg_integer(),
+          :number => non_neg_integer(),
           :l1_timestamp => DateTime.t(),
-          :l2_block_start => non_neg_integer(),
-          :l2_block_end => non_neg_integer(),
-          :transaction_count => non_neg_integer(),
+          :l2_start_block_number => non_neg_integer(),
+          :l2_end_block_number => non_neg_integer(),
+          :transactions_count => non_neg_integer(),
           :l1_transaction_hashes => list(),
           :batch_data_container => :in_blob4844 | :in_celestia | :in_calldata | nil
         }
   def prepare_base_info_for_batch(
-        internal_id,
+        number,
         l2_block_number_from,
         l2_block_number_to,
-        transaction_count,
+        transactions_count,
         batch_data_container,
         batch
       ) do
     %{
-      :internal_id => internal_id,
+      :number => number,
       :l1_timestamp => batch.l1_timestamp,
-      :l2_block_start => l2_block_number_from,
-      :l2_block_end => l2_block_number_to,
-      :transaction_count => transaction_count,
+      :l2_start_block_number => l2_block_number_from,
+      :l2_end_block_number => l2_block_number_to,
+      :transactions_count => transactions_count,
       :l1_transaction_hashes => batch.l1_transaction_hashes,
       :batch_data_container => batch_data_container
     }

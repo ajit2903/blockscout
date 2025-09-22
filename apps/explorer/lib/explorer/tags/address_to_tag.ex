@@ -70,7 +70,7 @@ defmodule Explorer.Tags.AddressToTag do
       current_address_hashes_strings =
         current_address_hashes
         |> Enum.map(fn address_hash ->
-          "0x" <> Base.encode16(address_hash.bytes, case: :lower)
+          to_string(address_hash)
         end)
 
       current_address_hashes_strings_tuples = MapSet.new(current_address_hashes_strings)

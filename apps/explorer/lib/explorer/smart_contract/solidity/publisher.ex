@@ -305,8 +305,8 @@ defmodule Explorer.SmartContract.Solidity.Publisher do
     - `{:ok, %SmartContract{}}` if successful
     - `{:error, %Ecto.Changeset{}}` if there was an error
   """
-  @spec publish_smart_contract(String.t(), map(), map(), boolean(), String.t() | nil) ::
-          {:ok, SmartContract.t()} | {:error, Ecto.Changeset.t()}
+  @spec publish_smart_contract(binary() | Explorer.Chain.Hash.t(), map(), map(), boolean(), String.t() | nil) ::
+          {:ok, SmartContract.t()} | {:error, Ecto.Changeset.t() | String.t()}
   def publish_smart_contract(address_hash, params, abi, verification_with_files?, file_path \\ nil) do
     attrs =
       if file_path do
@@ -392,9 +392,7 @@ defmodule Explorer.SmartContract.Solidity.Publisher do
       verified_via_eth_bytecode_db: params["verified_via_eth_bytecode_db"] || false,
       verified_via_verifier_alliance: params["verified_via_verifier_alliance"] || false,
       partially_verified: params["partially_verified"] || false,
-      is_vyper_contract: false,
       autodetect_constructor_args: params["autodetect_constructor_args"],
-      is_yul: params["is_yul"] || false,
       compiler_settings: clean_compiler_settings,
       license_type: prepare_license_type(params["license_type"]) || :none,
       is_blueprint: params["is_blueprint"] || false,
@@ -408,7 +406,11 @@ defmodule Explorer.SmartContract.Solidity.Publisher do
         )).()
   end
 
-  defp clear_constructor_arguments(constructor_arguments) do
+  @doc """
+  Helper function to clean constructor arguments
+  """
+  @spec clear_constructor_arguments(String.t() | nil) :: String.t() | nil
+  def clear_constructor_arguments(constructor_arguments) do
     if constructor_arguments != nil && constructor_arguments != "" do
       constructor_arguments
     else

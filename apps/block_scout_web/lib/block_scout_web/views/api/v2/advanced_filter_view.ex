@@ -2,7 +2,7 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterView do
   use BlockScoutWeb, :view
 
   alias BlockScoutWeb.API.V2.{Helper, TokenTransferView, TokenView}
-  alias Explorer.Chain.{Address, Data, Transaction}
+  alias Explorer.Chain.{Address, Data, MethodIdentifier, Transaction}
   alias Explorer.Market
   alias Explorer.Market.MarketHistory
 
@@ -73,8 +73,12 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterView do
       |> Stream.map(fn advanced_filter ->
         method_id =
           case advanced_filter.input do
-            %{bytes: <<method_id::binary-size(4), _::binary>>} -> "0x" <> Base.encode16(method_id, case: :lower)
-            _ -> nil
+            %{bytes: <<method_id::binary-size(4), _::binary>>} ->
+              {:ok, method_id} = MethodIdentifier.cast(method_id)
+              to_string(method_id)
+
+            _ ->
+              nil
           end
 
         {opening_price, closing_price} = date_to_prices[DateTime.to_date(advanced_filter.timestamp)]
@@ -99,7 +103,7 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterView do
           if(advanced_filter.type != "coin_transfer", do: advanced_filter.token_transfer.token.symbol, else: nil),
           advanced_filter.block_number,
           decimal_to_string_xsd(advanced_filter.fee),
-          decimal_to_string_xsd(exchange_rate.usd_value),
+          decimal_to_string_xsd(exchange_rate.fiat_value),
           decimal_to_string_xsd(opening_price),
           decimal_to_string_xsd(closing_price)
         ]

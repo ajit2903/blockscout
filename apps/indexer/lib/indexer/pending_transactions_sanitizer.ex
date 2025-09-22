@@ -121,23 +121,26 @@ defmodule Indexer.PendingTransactionsSanitizer do
   end
 
   defp fetch_pending_transaction_and_delete(transaction) do
-    pending_transaction_hash_string = "0x" <> Base.encode16(transaction.hash.bytes, case: :lower)
-
-    case transaction
-         |> Changeset.change()
-         |> Repo.delete(timeout: :infinity) do
-      {:ok, _transaction} ->
-        Logger.debug(
-          "Transaction with hash #{pending_transaction_hash_string} successfully deleted from Blockscout DB because it doesn't exist in the archive node anymore",
-          fetcher: :pending_transactions_to_refetch
-        )
-
+    with %{block_hash: nil} <- Repo.reload(transaction),
+         changeset = Changeset.change(transaction),
+         {:ok, _transaction} <- Repo.delete(changeset, timeout: :infinity) do
+      Logger.debug(
+        "Transaction with hash #{transaction.hash} successfully deleted from Blockscout DB because it doesn't exist in the archive node anymore",
+        fetcher: :pending_transactions_to_refetch
+      )
+    else
       {:error, changeset} ->
         Logger.debug(
           [
-            "Deletion of pending transaction with hash #{pending_transaction_hash_string} from Blockscout DB failed",
+            "Deletion of pending transaction with hash #{transaction.hash} from Blockscout DB failed",
             inspect(changeset)
           ],
+          fetcher: :pending_transactions_to_refetch
+        )
+
+      _transaction ->
+        Logger.debug(
+          "Transaction with hash #{transaction.hash} is already included in block, cancel deletion",
           fetcher: :pending_transactions_to_refetch
         )
     end
@@ -181,7 +184,7 @@ defmodule Indexer.PendingTransactionsSanitizer do
       Repo.update(changeset)
 
       Logger.debug(
-        "Pending transaction with hash #{"0x" <> Base.encode16(pending_transaction.hash.bytes, case: :lower)} assigned to block ##{block.number} with hash #{block.hash}"
+        "Pending transaction with hash #{pending_transaction.hash} assigned to block ##{block.number} with hash #{block.hash}"
       )
     end
   end

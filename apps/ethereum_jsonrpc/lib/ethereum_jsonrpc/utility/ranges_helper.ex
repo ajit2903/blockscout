@@ -32,6 +32,18 @@ defmodule EthereumJSONRPC.Utility.RangesHelper do
   end
 
   @doc """
+  Filters elements with `filter_func` if `TRACE_BLOCK_RANGES` is set
+  """
+  @spec filter_by_height_range([any()], (any() -> boolean())) :: [any()]
+  def filter_by_height_range(elements, filter_func) do
+    if trace_ranges_present?() do
+      Enum.filter(elements, &filter_func.(&1))
+    else
+      elements
+    end
+  end
+
+  @doc """
   Checks if trace ranges are defined via env variables
   """
   @spec trace_ranges_present? :: boolean()
@@ -56,19 +68,73 @@ defmodule EthereumJSONRPC.Utility.RangesHelper do
   def parse_block_ranges(block_ranges_string) do
     block_ranges_string
     |> String.split(",")
-    |> Enum.map(fn string_range ->
+    |> Enum.reduce({[], nil}, fn string_range, {ranges, to_latest} ->
       case String.split(string_range, "..") do
         [from_string, "latest"] ->
-          parse_integer(from_string)
+          {ranges, parse_integer(from_string)}
 
         [from_string, to_string] ->
-          get_from_to(from_string, to_string)
+          {[get_from_to(from_string, to_string) | ranges], to_latest}
 
         _ ->
-          nil
+          {ranges, to_latest}
       end
     end)
-    |> sanitize_ranges()
+    |> then(fn
+      {ranges, nil} ->
+        sanitize_ranges(ranges)
+
+      {ranges, to_latest} ->
+        ranges
+        |> sanitize_ranges()
+        |> Enum.reduce([], fn
+          first..last//1 = range, acc ->
+            cond do
+              first >= to_latest -> acc
+              last >= to_latest -> [first..(to_latest - 1) | acc]
+              true -> [range | acc]
+            end
+
+          first..last//-1 = range, acc ->
+            cond do
+              last >= to_latest -> acc
+              first >= to_latest -> [(to_latest - 1)..last | acc]
+              true -> [range | acc]
+            end
+        end)
+        |> Enum.reverse()
+        |> Kernel.++([to_latest])
+    end)
+  end
+
+  @doc """
+  Extracts the minimum block number from a given block ranges string.
+
+  ## Parameters
+
+    - block_ranges_string: A string representing block ranges.
+
+  ## Returns
+
+    - The minimum block number as an integer.
+
+  ## Examples
+
+      iex> get_min_block_number_from_range_string("100..200,300..400")
+      100
+
+  """
+  @spec get_min_block_number_from_range_string(binary()) :: integer()
+  def get_min_block_number_from_range_string(block_ranges_string) do
+    min_block_number =
+      case block_ranges_string
+           |> parse_block_ranges()
+           |> Enum.at(0) do
+        block_number.._//_ -> block_number
+        block_number -> block_number
+      end
+
+    min_block_number
   end
 
   @doc """
@@ -94,39 +160,11 @@ defmodule EthereumJSONRPC.Utility.RangesHelper do
   @doc """
   Rejects empty ranges and merges adjacent ranges
   """
-  @spec sanitize_ranges([Range.t() | integer()]) :: [Range.t() | integer()]
+  @spec sanitize_ranges([Range.t() | nil]) :: [Range.t()]
   def sanitize_ranges(ranges) do
     ranges
     |> Enum.reject(&is_nil/1)
-    |> Enum.sort_by(
-      fn
-        from.._to//_ -> from
-        el -> el
-      end,
-      :asc
-    )
-    |> Enum.chunk_while(
-      nil,
-      fn
-        _from.._to//_ = chunk, nil ->
-          {:cont, chunk}
-
-        _ch_from..ch_to//_ = chunk, acc_from..acc_to//_ = acc ->
-          if Range.disjoint?(chunk, acc),
-            do: {:cont, acc, chunk},
-            else: {:cont, acc_from..max(ch_to, acc_to)}
-
-        num, nil ->
-          {:halt, num}
-
-        num, acc_from.._//_ = acc ->
-          if Range.disjoint?(num..num, acc), do: {:cont, acc, num}, else: {:halt, acc_from}
-
-        _, num ->
-          {:halt, num}
-      end,
-      fn remainder -> {:cont, remainder, nil} end
-    )
+    |> do_sanitize_ranges()
   end
 
   @doc """
@@ -169,6 +207,30 @@ defmodule EthereumJSONRPC.Utility.RangesHelper do
         reducer.(block_number, acc)
       end
     end
+  end
+
+  defp do_sanitize_ranges([]), do: []
+
+  defp do_sanitize_ranges([_.._//step | _] = ranges) do
+    ranges
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(fn first..last//_ -> min(first, last)..max(first, last) end)
+    |> Enum.sort_by(fn first.._last//_ -> first end)
+    |> Enum.reduce([], fn
+      range, [] ->
+        [range]
+
+      first..last//_ = range, [previous_first..previous_last//_ | rest] = acc ->
+        if first <= previous_last + 1 do
+          [previous_first..max(previous_last, last) | rest]
+        else
+          [range | acc]
+        end
+    end)
+    |> Enum.reverse()
+    |> Enum.map(fn first..last//_ ->
+      if step == 1, do: first..last, else: last..first//-1
+    end)
   end
 
   defp extract_block_number(%{block_number: block_number}), do: block_number

@@ -31,7 +31,7 @@ defmodule BlockScoutWeb.API.V2.TokenTransferView do
           token_transfers,
           &render("token_transfer.json", %{
             token_transfer: &1,
-            decoded_transaction_input: decoded_transactions_map[&1.transaction.hash],
+            decoded_transaction_input: &1.transaction && decoded_transactions_map[&1.transaction.hash],
             conn: conn
           })
         ),
@@ -59,7 +59,8 @@ defmodule BlockScoutWeb.API.V2.TokenTransferView do
       "method" => Transaction.method_name(token_transfer.transaction, decoded_input, true),
       "block_hash" => to_string(token_transfer.block_hash),
       "block_number" => token_transfer.block_number,
-      "log_index" => token_transfer.log_index
+      "log_index" => token_transfer.log_index,
+      "token_type" => token_transfer.token_type
     }
   end
 
