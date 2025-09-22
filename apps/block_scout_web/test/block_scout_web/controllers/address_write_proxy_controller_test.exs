@@ -2,7 +2,7 @@ defmodule BlockScoutWeb.AddressWriteProxyControllerTest do
   use BlockScoutWeb.ConnCase, async: true
   use ExUnit.Case, async: false
 
-  alias Explorer.ExchangeRates.Token
+  alias Explorer.Market.Token
   alias Explorer.Chain.Address
   alias Explorer.TestHelper
 
@@ -43,7 +43,8 @@ defmodule BlockScoutWeb.AddressWriteProxyControllerTest do
 
       insert(:smart_contract, address_hash: contract_address.hash, contract_code_md5: "123")
 
-      TestHelper.get_eip1967_implementation_zero_addresses()
+      EthereumJSONRPC.Mox
+      |> TestHelper.mock_generic_proxy_requests()
 
       conn =
         get(conn, address_write_proxy_path(BlockScoutWeb.Endpoint, :index, Address.checksum(contract_address.hash)))

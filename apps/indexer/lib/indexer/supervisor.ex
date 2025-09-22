@@ -23,6 +23,11 @@ defmodule Indexer.Supervisor do
   alias Indexer.Fetcher.Blackfort.Validator, as: ValidatorBlackfort
   alias Indexer.Fetcher.CoinBalance.Catchup, as: CoinBalanceCatchup
   alias Indexer.Fetcher.CoinBalance.Realtime, as: CoinBalanceRealtime
+  alias Indexer.Fetcher.MultichainSearchDb.BalancesExportQueue, as: MultichainSearchDbBalancesExportQueue
+  alias Indexer.Fetcher.MultichainSearchDb.CountersExportQueue, as: MultichainSearchDbCountersExportQueue
+  alias Indexer.Fetcher.MultichainSearchDb.CountersFetcher, as: MultichainSearchDbCountersFetcher
+  alias Indexer.Fetcher.MultichainSearchDb.MainExportQueue, as: MultichainSearchDbMainExportQueue
+  alias Indexer.Fetcher.MultichainSearchDb.TokenInfoExportQueue, as: MultichainSearchDbTokenInfoExportQueue
   alias Indexer.Fetcher.Stability.Validator, as: ValidatorStability
   alias Indexer.Fetcher.TokenInstance.Realtime, as: TokenInstanceRealtime
   alias Indexer.Fetcher.TokenInstance.Retry, as: TokenInstanceRetry
@@ -31,6 +36,7 @@ defmodule Indexer.Supervisor do
   alias Indexer.Fetcher.TokenInstance.SanitizeERC721, as: TokenInstanceSanitizeERC721
 
   alias Indexer.Fetcher.{
+    AddressNonceUpdater,
     BlockReward,
     ContractCode,
     EmptyBlocksSanitizer,
@@ -41,6 +47,7 @@ defmodule Indexer.Supervisor do
     RootstockData,
     Token,
     TokenBalance,
+    TokenCountersUpdater,
     TokenTotalSupplyUpdater,
     TokenUpdater,
     TransactionAction,
@@ -56,10 +63,14 @@ defmodule Indexer.Supervisor do
   alias Indexer.Fetcher.ZkSync.BatchesStatusTracker, as: ZkSyncBatchesStatusTracker
   alias Indexer.Fetcher.ZkSync.TransactionBatch, as: ZkSyncTransactionBatch
 
+  alias Indexer.Migrator.RecoveryWETHTokenTransfers
+
   alias Indexer.Temporary.{
     UncatalogedTokenTransfers,
     UnclesWithoutIndex
   }
+
+  alias Indexer.Utils.EventNotificationsCleaner
 
   def child_spec([]) do
     child_spec([[]])
@@ -143,7 +154,14 @@ defmodule Indexer.Supervisor do
          [[json_rpc_named_arguments: json_rpc_named_arguments, memory_monitor: memory_monitor]]},
         {TokenUpdater.Supervisor,
          [[json_rpc_named_arguments: json_rpc_named_arguments, memory_monitor: memory_monitor]]},
+        {TokenCountersUpdater.Supervisor,
+         [[json_rpc_named_arguments: json_rpc_named_arguments, memory_monitor: memory_monitor]]},
         {ReplacedTransaction.Supervisor, [[memory_monitor: memory_monitor]]},
+        {MultichainSearchDbMainExportQueue.Supervisor, [[memory_monitor: memory_monitor]]},
+        {MultichainSearchDbBalancesExportQueue.Supervisor, [[memory_monitor: memory_monitor]]},
+        {MultichainSearchDbTokenInfoExportQueue.Supervisor, [[memory_monitor: memory_monitor]]},
+        {MultichainSearchDbCountersExportQueue.Supervisor, [[memory_monitor: memory_monitor]]},
+        {MultichainSearchDbCountersFetcher.Supervisor, [[memory_monitor: memory_monitor]]},
         {Indexer.Fetcher.RollupL1ReorgMonitor.Supervisor, [[memory_monitor: memory_monitor]]},
         configure(
           Indexer.Fetcher.Optimism.TransactionBatch.Supervisor,
@@ -161,14 +179,22 @@ defmodule Indexer.Supervisor do
           Indexer.Fetcher.Optimism.EIP1559ConfigUpdate.Supervisor,
           [[memory_monitor: memory_monitor, json_rpc_named_arguments: json_rpc_named_arguments]]
         },
-        configure(Indexer.Fetcher.PolygonEdge.Deposit.Supervisor, [[memory_monitor: memory_monitor]]),
-        configure(Indexer.Fetcher.PolygonEdge.DepositExecute.Supervisor, [
-          [memory_monitor: memory_monitor, json_rpc_named_arguments: json_rpc_named_arguments]
-        ]),
-        configure(Indexer.Fetcher.PolygonEdge.Withdrawal.Supervisor, [
-          [memory_monitor: memory_monitor, json_rpc_named_arguments: json_rpc_named_arguments]
-        ]),
-        configure(Indexer.Fetcher.PolygonEdge.WithdrawalExit.Supervisor, [[memory_monitor: memory_monitor]]),
+        {
+          Indexer.Fetcher.Optimism.Interop.Message.Supervisor,
+          [[memory_monitor: memory_monitor, json_rpc_named_arguments: json_rpc_named_arguments]]
+        },
+        {
+          Indexer.Fetcher.Optimism.Interop.MessageFailed.Supervisor,
+          [[memory_monitor: memory_monitor, json_rpc_named_arguments: json_rpc_named_arguments]]
+        },
+        {
+          Indexer.Fetcher.Optimism.Interop.MessageQueue.Supervisor,
+          [[memory_monitor: memory_monitor, json_rpc_named_arguments: json_rpc_named_arguments]]
+        },
+        {
+          Indexer.Fetcher.Optimism.Interop.MultichainExport.Supervisor,
+          [[memory_monitor: memory_monitor]]
+        },
         configure(Indexer.Fetcher.Shibarium.L2.Supervisor, [
           [json_rpc_named_arguments: json_rpc_named_arguments, memory_monitor: memory_monitor]
         ]),
@@ -230,11 +256,19 @@ defmodule Indexer.Supervisor do
          ]},
         {Indexer.Fetcher.Zilliqa.ScillaSmartContracts.Supervisor, [[memory_monitor: memory_monitor]]},
         {Indexer.Fetcher.Beacon.Blob.Supervisor, [[memory_monitor: memory_monitor]]},
+        {Indexer.Fetcher.Beacon.Deposit.Supervisor, []},
+        {Indexer.Fetcher.Beacon.Deposit.Status.Supervisor, []},
+        {Indexer.Fetcher.SignedAuthorizationStatus.Supervisor,
+         [[json_rpc_named_arguments: json_rpc_named_arguments, memory_monitor: memory_monitor]]},
 
         # Out-of-band fetchers
         {EmptyBlocksSanitizer.Supervisor, [[json_rpc_named_arguments: json_rpc_named_arguments]]},
         {PendingTransactionsSanitizer, [[json_rpc_named_arguments: json_rpc_named_arguments]]},
         {TokenTotalSupplyUpdater, [[]]},
+        AddressNonceUpdater,
+
+        # Notifications cleaner
+        configure(EventNotificationsCleaner, [[]]),
 
         # Temporary workers
         {UncatalogedTokenTransfers.Supervisor, [[]]},
@@ -243,6 +277,7 @@ defmodule Indexer.Supervisor do
         {PendingOpsCleaner, [[], []]},
         {PendingBlockOperationsSanitizer, [[]]},
         {RootstockData.Supervisor, [[json_rpc_named_arguments: json_rpc_named_arguments]]},
+        configure(RecoveryWETHTokenTransfers, [[memory_monitor: memory_monitor]]),
 
         # Block fetchers
         configure(BlockRealtime.Supervisor, [

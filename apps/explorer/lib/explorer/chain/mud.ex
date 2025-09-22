@@ -22,6 +22,7 @@ defmodule Explorer.Chain.Mud do
     Block,
     Data,
     Hash,
+    MethodIdentifier,
     Mud,
     Mud.Schema,
     Mud.Schema.FieldSchema,
@@ -310,7 +311,10 @@ defmodule Explorer.Chain.Mud do
       ((system_contract && system_contract.abi) || [])
       |> ABI.parse_specification()
       |> Enum.filter(&(&1.type == :function))
-      |> Enum.into(%{}, fn selector -> {"0x" <> Base.encode16(selector.method_id, case: :lower), selector} end)
+      |> Enum.into(%{}, fn selector ->
+        {:ok, method_id} = MethodIdentifier.cast(selector.method_id)
+        {to_string(method_id), selector}
+      end)
 
     function_selector_signature_records
     |> Enum.reject(&(&1 == {nil, nil}))
@@ -357,13 +361,13 @@ defmodule Explorer.Chain.Mud do
   Returns a map of block numbers to timestamps.
   """
   @spec preload_records_timestamps([Mud.t()]) :: %{non_neg_integer() => DateTime.t()}
-  def preload_records_timestamps(records) do
+  def preload_records_timestamps(records, options \\ []) do
     block_numbers = records |> Enum.map(&(&1.block_number |> Decimal.to_integer())) |> Enum.uniq()
 
     Block
     |> where([b], b.number in ^block_numbers)
     |> select([b], {b.number, b.timestamp})
-    |> Repo.all()
+    |> Chain.select_repo(options).all()
     |> Enum.into(%{})
   end
 
@@ -543,7 +547,7 @@ defmodule Explorer.Chain.Mud do
         int |> Integer.to_string()
 
       _ when type < 96 or type == 196 ->
-        "0x" <> Base.encode16(raw, case: :lower)
+        %Data{bytes: raw} |> to_string()
 
       96 ->
         raw == <<1>>

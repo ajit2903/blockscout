@@ -5,7 +5,7 @@ defmodule BlockScoutWeb.API.V2.SuaveView do
   alias Explorer.Helper, as: ExplorerHelper
 
   alias Ecto.Association.NotLoaded
-  alias Explorer.Chain.{Hash, Transaction}
+  alias Explorer.Chain.{Address, Hash, Transaction}
 
   @suave_bid_event "0x83481d5b04dea534715acad673a8177a46fc93882760f36bdc16ccac439d504e"
 
@@ -115,7 +115,7 @@ defmodule BlockScoutWeb.API.V2.SuaveView do
         ExplorerHelper.decode_data(bid_event.data, [{:bytes, 16}, {:uint, 64}, {:array, :address}])
 
       Enum.map(allowed_peekers, fn peeker ->
-        "0x" <> Base.encode16(peeker, case: :lower)
+        Address.checksum(peeker)
       end)
     end
   end

@@ -15,12 +15,12 @@ defmodule BlockScoutWeb.API.V2.ZkSyncView do
       "number" => batch.number,
       "timestamp" => batch.timestamp,
       "root_hash" => batch.root_hash,
-      "l1_transaction_count" => batch.l1_transaction_count,
-      "l2_transaction_count" => batch.l2_transaction_count,
+      "l1_transactions_count" => batch.l1_transaction_count,
+      "l2_transactions_count" => batch.l2_transaction_count,
       "l1_gas_price" => batch.l1_gas_price,
       "l2_fair_gas_price" => batch.l2_fair_gas_price,
-      "start_block" => batch.start_block,
-      "end_block" => batch.end_block
+      "start_block_number" => batch.start_block,
+      "end_block_number" => batch.end_block
     }
     |> add_l1_transactions_info_and_status(batch)
   end
@@ -64,7 +64,7 @@ defmodule BlockScoutWeb.API.V2.ZkSyncView do
       %{
         "number" => batch.number,
         "timestamp" => batch.timestamp,
-        "transaction_count" => batch.l1_transaction_count + batch.l2_transaction_count
+        "transactions_count" => batch.l1_transaction_count + batch.l2_transaction_count
       }
       |> add_l1_transactions_info_and_status(batch)
     end)
@@ -83,10 +83,10 @@ defmodule BlockScoutWeb.API.V2.ZkSyncView do
   """
   @spec extend_transaction_json_response(map(), %{
           :__struct__ => Explorer.Chain.Transaction,
-          :zksync_batch => any(),
-          :zksync_commit_transaction => any(),
-          :zksync_execute_transaction => any(),
-          :zksync_prove_transaction => any(),
+          optional(:zksync_batch) => any(),
+          optional(:zksync_commit_transaction) => any(),
+          optional(:zksync_execute_transaction) => any(),
+          optional(:zksync_prove_transaction) => any(),
           optional(any()) => any()
         }) :: map()
   def extend_transaction_json_response(out_json, %Transaction{} = transaction) do
@@ -106,10 +106,10 @@ defmodule BlockScoutWeb.API.V2.ZkSyncView do
   """
   @spec extend_block_json_response(map(), %{
           :__struct__ => Explorer.Chain.Block,
-          :zksync_batch => any(),
-          :zksync_commit_transaction => any(),
-          :zksync_execute_transaction => any(),
-          :zksync_prove_transaction => any(),
+          optional(:zksync_batch) => any(),
+          optional(:zksync_commit_transaction) => any(),
+          optional(:zksync_execute_transaction) => any(),
+          optional(:zksync_prove_transaction) => any(),
           optional(any()) => any()
         }) :: map()
   def extend_block_json_response(out_json, %Block{} = block) do
@@ -193,5 +193,13 @@ defmodule BlockScoutWeb.API.V2.ZkSyncView do
       not is_nil(zksync_item.batch_number) -> "Sealed on L2"
       true -> "Processed on L2"
     end
+  end
+
+  @doc """
+  Returns a list of possible batch statuses.
+  """
+  @spec batch_status_enum() :: [String.t()]
+  def batch_status_enum do
+    ["Executed on L1", "Validated on L1", "Sent to L1", "Sealed on L2", "Processed on L2"]
   end
 end

@@ -20,6 +20,7 @@ defmodule Indexer.Fetcher.TokenBalance do
 
   alias Explorer.Chain
   alias Explorer.Chain.Address.{CurrentTokenBalance, TokenBalance}
+  alias Explorer.Chain.Events.Publisher
   alias Explorer.Chain.Hash
   alias Explorer.Utility.MissingBalanceOfToken
   alias Indexer.{BufferedTask, TokenBalances, Tracer}
@@ -164,7 +165,7 @@ defmodule Indexer.Fetcher.TokenBalance do
     {missing_balance_of_balances, other_failed_balances} =
       Enum.split_with(failed_token_balances, fn
         %{error: :unable_to_decode} -> true
-        %{error: error} when is_binary(error) -> error =~ "execution reverted"
+        %{error: error} when is_binary(error) -> String.match?(error, ~r/execution.*revert/)
         _ -> false
       end)
 
@@ -220,6 +221,21 @@ defmodule Indexer.Fetcher.TokenBalance do
     }
 
     case Chain.import(import_params) do
+      {:ok, %{address_current_token_balances: imported_ctbs}} ->
+        imported_ctbs
+        |> Enum.group_by(& &1.address_hash)
+        |> Enum.each(fn {address_hash, ctbs} ->
+          Publisher.broadcast(
+            %{
+              address_current_token_balances: %{
+                address_hash: to_string(address_hash),
+                address_current_token_balances: ctbs
+              }
+            },
+            :realtime
+          )
+        end)
+
       {:ok, _} ->
         :ok
 

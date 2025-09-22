@@ -2,8 +2,10 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
   use EthereumJSONRPC.Case, async: false
   use BlockScoutWeb.ConnCase
   use BlockScoutWeb.ChannelCase, async: false
+  use Utils.CompileTimeEnvHelper, bridged_tokens_enabled: [:explorer, [Explorer.Chain.BridgedToken, :enabled]]
 
   import Mox
+  import Ecto.Query, only: [from: 2]
 
   alias Explorer.{Repo, TestHelper}
 
@@ -406,7 +408,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
 
       assert response_2nd_page = json_response(request_2nd_page, 200)
 
-      check_paginated_response(response, response_2nd_page, token_balances)
+      check_holders_paginated_response(response, response_2nd_page, token_balances)
     end
 
     test "check pagination with the same values", %{conn: conn} do
@@ -430,7 +432,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
 
       assert response_2nd_page = json_response(request_2nd_page, 200)
 
-      check_paginated_response(response, response_2nd_page, token_balances)
+      check_holders_paginated_response(response, response_2nd_page, token_balances)
     end
   end
 
@@ -497,7 +499,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
       tokens_ordered_by_holders = Enum.sort(tokens, &(&1.holder_count <= &2.holder_count))
 
       request_ordered_by_holders =
-        get(conn, "/api/v2/tokens", additional_params |> Map.merge(%{"sort" => "holder_count", "order" => "desc"}))
+        get(conn, "/api/v2/tokens", additional_params |> Map.merge(%{"sort" => "holders_count", "order" => "desc"}))
 
       assert response_ordered_by_holders = json_response(request_ordered_by_holders, 200)
 
@@ -506,7 +508,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
           conn,
           "/api/v2/tokens",
           additional_params
-          |> Map.merge(%{"sort" => "holder_count", "order" => "desc"})
+          |> Map.merge(%{"sort" => "holders_count", "order" => "desc"})
           |> Map.merge(response_ordered_by_holders["next_page_params"])
         )
 
@@ -521,7 +523,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
       tokens_ordered_by_holders_asc = Enum.sort(tokens, &(&1.holder_count >= &2.holder_count))
 
       request_ordered_by_holders_asc =
-        get(conn, "/api/v2/tokens", additional_params |> Map.merge(%{"sort" => "holder_count", "order" => "asc"}))
+        get(conn, "/api/v2/tokens", additional_params |> Map.merge(%{"sort" => "holders_count", "order" => "asc"}))
 
       assert response_ordered_by_holders_asc = json_response(request_ordered_by_holders_asc, 200)
 
@@ -530,7 +532,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
           conn,
           "/api/v2/tokens",
           additional_params
-          |> Map.merge(%{"sort" => "holder_count", "order" => "asc"})
+          |> Map.merge(%{"sort" => "holders_count", "order" => "asc"})
           |> Map.merge(response_ordered_by_holders_asc["next_page_params"])
         )
 
@@ -628,6 +630,67 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
 
       assert response_2nd_page = json_response(request_2nd_page, 200)
       check_paginated_response(response, response_2nd_page, tokens)
+    end
+
+    test "get token with ok reputation", %{conn: conn} do
+      init_value = Application.get_env(:block_scout_web, :hide_scam_addresses)
+      Application.put_env(:block_scout_web, :hide_scam_addresses, true)
+      on_exit(fn -> Application.put_env(:block_scout_web, :hide_scam_addresses, init_value) end)
+
+      insert(:token)
+
+      request = conn |> put_req_cookie("show_scam_tokens", "true") |> get("/api/v2/tokens")
+      response = json_response(request, 200)
+
+      assert List.first(response["items"])["reputation"] == "ok"
+
+      assert response == conn |> get("/api/v2/tokens") |> json_response(200)
+    end
+
+    test "get token with scam reputation", %{conn: conn} do
+      init_value = Application.get_env(:block_scout_web, :hide_scam_addresses)
+      Application.put_env(:block_scout_web, :hide_scam_addresses, true)
+      on_exit(fn -> Application.put_env(:block_scout_web, :hide_scam_addresses, init_value) end)
+
+      target_token = insert(:token)
+      insert(:scam_badge_to_address, address_hash: target_token.contract_address_hash)
+
+      request = conn |> put_req_cookie("show_scam_tokens", "true") |> get("/api/v2/tokens")
+      response = json_response(request, 200)
+
+      assert List.first(response["items"])["reputation"] == "scam"
+
+      request = conn |> get("/api/v2/tokens")
+      response = json_response(request, 200)
+
+      assert response["items"] == []
+    end
+
+    test "get token with ok reputation with hide_scam_addresses=false", %{conn: conn} do
+      init_value = Application.get_env(:block_scout_web, :hide_scam_addresses)
+      Application.put_env(:block_scout_web, :hide_scam_addresses, false)
+      on_exit(fn -> Application.put_env(:block_scout_web, :hide_scam_addresses, init_value) end)
+
+      insert(:token)
+
+      request = conn |> get("/api/v2/tokens")
+      response = json_response(request, 200)
+
+      assert List.first(response["items"])["reputation"] == "ok"
+    end
+
+    test "get token with scam reputation with hide_scam_addresses=false", %{conn: conn} do
+      init_value = Application.get_env(:block_scout_web, :hide_scam_addresses)
+      Application.put_env(:block_scout_web, :hide_scam_addresses, false)
+      on_exit(fn -> Application.put_env(:block_scout_web, :hide_scam_addresses, init_value) end)
+
+      target_token = insert(:token)
+      insert(:scam_badge_to_address, address_hash: target_token.contract_address_hash)
+
+      request = conn |> get("/api/v2/tokens")
+      response = json_response(request, 200)
+
+      assert List.first(response["items"])["reputation"] == "ok"
     end
 
     test "tokens are filtered by single type", %{conn: conn} do
@@ -1115,6 +1178,60 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
 
       Application.put_env(:indexer, :ipfs, old_env)
     end
+
+    test "metadata dropped on token uri on demand filler", %{conn: conn} do
+      token = insert(:token, type: "ERC-721")
+
+      insert(:token_instance,
+        token_id: 0,
+        token_contract_address_hash: token.contract_address_hash,
+        metadata: %{"awesome" => "metadata"}
+      )
+
+      encoded_url_1 =
+        "0x" <>
+          (ABI.TypeEncoder.encode(["http://240.0.0.0/api/metadata.json"], %ABI.FunctionSelector{
+             function: nil,
+             types: [
+               :string
+             ]
+           })
+           |> Base.encode16(case: :lower))
+
+      token_contract_address_hash_string = to_string(token.contract_address_hash)
+
+      expect(
+        EthereumJSONRPC.Mox,
+        :json_rpc,
+        fn [
+             %{
+               id: id_1,
+               jsonrpc: "2.0",
+               method: "eth_call",
+               params: [
+                 %{
+                   data: "0xc87b56dd0000000000000000000000000000000000000000000000000000000000000000",
+                   to: ^token_contract_address_hash_string
+                 },
+                 "latest"
+               ]
+             }
+           ],
+           _options ->
+          {:ok, [%{id: id_1, jsonrpc: "2.0", result: encoded_url_1}]}
+        end
+      )
+
+      request = get(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/0")
+
+      assert data = json_response(request, 200)
+      assert data["metadata"] == nil
+
+      instance = Repo.one(Instance)
+      assert instance.metadata == nil
+      assert instance.error == "blacklist"
+      assert instance.skip_metadata_url == false
+    end
   end
 
   describe "/tokens/{address_hash}/instances/{token_id}/transfers" do
@@ -1417,7 +1534,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
 
       assert response_2nd_page = json_response(request_2nd_page, 200)
 
-      check_paginated_response(response, response_2nd_page, token_balances)
+      check_holders_paginated_response(response, response_2nd_page, token_balances)
     end
   end
 
@@ -1481,8 +1598,9 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
     setup :verify_on_exit!
 
     setup %{json_rpc_named_arguments: json_rpc_named_arguments} do
+      original_config = :persistent_term.get(:rate_limit_config)
       old_recaptcha_env = Application.get_env(:block_scout_web, :recaptcha)
-      old_http_adapter = Application.get_env(:block_scout_web, :http_adapter)
+      original_api_rate_limit = Application.get_env(:block_scout_web, :api_rate_limit)
 
       v2_secret_key = "v2_secret_key"
       v3_secret_key = "v3_secret_key"
@@ -1492,8 +1610,6 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
         v3_secret_key: v3_secret_key,
         is_disabled: false
       )
-
-      Application.put_env(:block_scout_web, :http_adapter, Explorer.Mox.HTTPoison)
 
       mocked_json_rpc_named_arguments = Keyword.put(json_rpc_named_arguments, :transport, EthereumJSONRPC.Mox)
 
@@ -1507,29 +1623,319 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
       %{json_rpc_named_arguments: mocked_json_rpc_named_arguments}
 
       Subscriber.to(:fetched_token_instance_metadata, :on_demand)
+      Subscriber.to(:not_fetched_token_instance_metadata, :on_demand)
+
+      Application.put_env(:block_scout_web, :api_rate_limit, Keyword.put(original_api_rate_limit, :disabled, false))
+
+      config = %{
+        static_match: %{},
+        wildcard_match: %{},
+        parametrized_match: %{
+          ["api", "v2", "tokens", ":param", "instances", ":param", "refetch-metadata"] => %{
+            ip: %{period: 3_600_000, limit: 1},
+            recaptcha_to_bypass_429: true,
+            bypass_token_scope: "token_instance_refetch_metadata",
+            bucket_key_prefix: "api/v2/tokens/:param/instances/:param/refetch-metadata_",
+            isolate_rate_limit?: true
+          }
+        }
+      }
+
+      :persistent_term.put(:rate_limit_config, config)
 
       on_exit(fn ->
+        :persistent_term.put(:rate_limit_config, original_config)
         Application.put_env(:block_scout_web, :recaptcha, old_recaptcha_env)
-        Application.put_env(:block_scout_web, :http_adapter, old_http_adapter)
+        Application.put_env(:block_scout_web, :api_rate_limit, original_api_rate_limit)
+        :ets.delete_all_objects(BlockScoutWeb.RateLimit.Hammer.ETS)
       end)
 
       {:ok, %{v2_secret_key: v2_secret_key, v3_secret_key: v3_secret_key}}
     end
 
-    test "token instance metadata on-demand re-fetcher is called", %{conn: conn, v2_secret_key: v2_secret_key} do
+    test "token instance metadata on-demand re-fetcher is called; recaptcha is required after rate limit is exceeded",
+         %{conn: conn, v2_secret_key: v2_secret_key} do
+      token = insert(:token, type: "ERC-721")
+      token_id = 1
+
+      insert(:token_instance,
+        token_id: token_id,
+        token_contract_address_hash: token.contract_address_hash,
+        metadata: %{}
+      )
+
+      metadata = %{"name" => "Super Token"}
+      url = "http://metadata.endpoint.com"
+      token_contract_address_hash_string = to_string(token.contract_address_hash)
+
+      TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body: Jason.encode!(metadata)
+           }}
+        end
+      )
+
+      topic = "token_instances:#{token_contract_address_hash_string}"
+
+      {:ok, _reply, _socket} =
+        BlockScoutWeb.V2.UserSocket
+        |> socket("no_id", %{})
+        |> subscribe_and_join(topic)
+
+      request =
+        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert %{"message" => "OK"} = json_response(request, 200)
+
+      :timer.sleep(100)
+
+      assert_receive(
+        {:chain_event, :fetched_token_instance_metadata, :on_demand,
+         [^token_contract_address_hash_string, ^token_id, ^metadata]}
+      )
+
+      assert_receive %Phoenix.Socket.Message{
+                       payload: %{token_id: ^token_id, fetched_metadata: ^metadata},
+                       event: "fetched_token_instance_metadata",
+                       topic: ^topic
+                     },
+                     :timer.seconds(1)
+
+      token_instance_from_db =
+        Repo.get_by(Instance, token_id: token_id, token_contract_address_hash: token.contract_address_hash)
+
+      assert(token_instance_from_db)
+      assert token_instance_from_db.metadata == metadata
+
       expected_body = "secret=#{v2_secret_key}&response=123"
 
-      Explorer.Mox.HTTPoison
-      |> expect(:post, fn _url, ^expected_body, _headers, _options ->
-        {:ok,
-         %HTTPoison.Response{
-           status_code: 200,
-           body:
-             Jason.encode!(%{
-               "success" => true,
-               "hostname" => Application.get_env(:block_scout_web, BlockScoutWeb.Endpoint)[:url][:host]
-             })
-         }}
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{body: ^expected_body}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body:
+               Jason.encode!(%{
+                 "success" => true,
+                 "hostname" => Application.get_env(:block_scout_web, BlockScoutWeb.Endpoint)[:url][:host]
+               })
+           }}
+        end
+      )
+
+      TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body: Jason.encode!(metadata)
+           }}
+        end
+      )
+
+      request =
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert json_response(request, 429)
+
+      request =
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> put_req_header("recaptcha-v2-response", "123")
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert %{"message" => "OK"} = json_response(request, 200)
+
+      :timer.sleep(100)
+
+      assert_receive(
+        {:chain_event, :fetched_token_instance_metadata, :on_demand,
+         [^token_contract_address_hash_string, ^token_id, ^metadata]}
+      )
+
+      assert_receive %Phoenix.Socket.Message{
+                       payload: %{token_id: ^token_id, fetched_metadata: ^metadata},
+                       event: "fetched_token_instance_metadata",
+                       topic: ^topic
+                     },
+                     :timer.seconds(1)
+
+      token_instance_from_db =
+        Repo.get_by(Instance, token_id: token_id, token_contract_address_hash: token.contract_address_hash)
+
+      assert(token_instance_from_db)
+      assert token_instance_from_db.metadata == metadata
+    end
+
+    test "don't fetch token instance metadata for non-existent token instance", %{
+      conn: conn,
+      v2_secret_key: _v2_secret_key
+    } do
+      token = insert(:token, type: "ERC-721")
+      token_id = 0
+
+      insert(:token_instance, token_id: token_id, token_contract_address_hash: token.contract_address_hash)
+
+      request =
+        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/1/refetch-metadata", %{})
+
+      assert %{"message" => "Not found"} = json_response(request, 404)
+    end
+
+    test "fetch token instance metadata for existing token instance with no metadata", %{
+      conn: conn
+    } do
+      token = insert(:token, type: "ERC-721")
+      token_id = 1
+
+      insert(:token_instance,
+        token_id: token_id,
+        token_contract_address_hash: token.contract_address_hash,
+        metadata: nil
+      )
+
+      metadata = %{"name" => "Super Token"}
+      url = "http://metadata.endpoint.com"
+      token_contract_address_hash_string = to_string(token.contract_address_hash)
+
+      TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body: Jason.encode!(metadata)
+           }}
+        end
+      )
+
+      topic = "token_instances:#{token_contract_address_hash_string}"
+
+      {:ok, _reply, _socket} =
+        BlockScoutWeb.V2.UserSocket
+        |> socket("no_id", %{})
+        |> subscribe_and_join(topic)
+
+      request =
+        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert %{"message" => "OK"} = json_response(request, 200)
+
+      :timer.sleep(100)
+
+      assert_receive(
+        {:chain_event, :fetched_token_instance_metadata, :on_demand,
+         [^token_contract_address_hash_string, ^token_id, ^metadata]}
+      )
+
+      assert_receive %Phoenix.Socket.Message{
+                       payload: %{token_id: ^token_id, fetched_metadata: ^metadata},
+                       event: "fetched_token_instance_metadata",
+                       topic: ^topic
+                     },
+                     :timer.seconds(1)
+
+      token_instance_from_db =
+        Repo.get_by(Instance, token_id: token_id, token_contract_address_hash: token.contract_address_hash)
+
+      assert(token_instance_from_db)
+      assert token_instance_from_db.metadata == metadata
+    end
+
+    test "emit not_fetched_token_instance_metadata event when fetching token instance metadata fails", %{
+      conn: conn
+    } do
+      token = insert(:token, type: "ERC-721")
+      token_id = 1
+
+      insert(:token_instance,
+        token_id: token_id,
+        token_contract_address_hash: token.contract_address_hash,
+        metadata: nil
+      )
+
+      url = "http://metadata.endpoint.com"
+      token_contract_address_hash_string = to_string(token.contract_address_hash)
+
+      TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 500,
+             body: "Error"
+           }}
+        end
+      )
+
+      topic = "token_instances:#{token_contract_address_hash_string}"
+
+      {:ok, _reply, _socket} =
+        BlockScoutWeb.V2.UserSocket
+        |> socket("no_id", %{})
+        |> subscribe_and_join(topic)
+
+      request =
+        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{
+          "recaptcha_response" => "123"
+        })
+
+      assert %{"message" => "OK"} = json_response(request, 200)
+
+      :timer.sleep(100)
+
+      assert_receive(
+        {:chain_event, :not_fetched_token_instance_metadata, :on_demand,
+         [^token_contract_address_hash_string, ^token_id, "error"]}
+      )
+
+      assert_receive %Phoenix.Socket.Message{
+                       payload: %{token_id: ^token_id, reason: "error"},
+                       event: "not_fetched_token_instance_metadata",
+                       topic: ^topic
+                     },
+                     :timer.seconds(1)
+
+      token_instance_from_db =
+        Repo.get_by(Instance, token_id: token_id, token_contract_address_hash: token.contract_address_hash)
+
+      assert(token_instance_from_db)
+      assert is_nil(token_instance_from_db.metadata)
+    end
+
+    test "fetch token instance metadata using scoped bypass api key", %{conn: conn} do
+      # Configure scoped bypass api key for this test
+      old_recaptcha_env = Application.get_env(:block_scout_web, :recaptcha)
+      scoped_bypass_token = "test_scoped_token_123"
+
+      Application.put_env(
+        :block_scout_web,
+        :recaptcha,
+        Keyword.merge(old_recaptcha_env,
+          scoped_bypass_tokens: [
+            token_instance_refetch_metadata: scoped_bypass_token
+          ]
+        )
+      )
+
+      on_exit(fn ->
+        Application.put_env(:block_scout_web, :recaptcha, old_recaptcha_env)
       end)
 
       token = insert(:token, type: "ERC-721")
@@ -1547,24 +1953,26 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
 
       TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
 
-      Application.put_env(:explorer, :http_adapter, Explorer.Mox.HTTPoison)
-
-      Explorer.Mox.HTTPoison
-      |> expect(:get, fn ^url, _headers, _options ->
-        {:ok, %HTTPoison.Response{status_code: 200, body: Jason.encode!(metadata)}}
-      end)
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body: Jason.encode!(metadata)
+           }}
+        end
+      )
 
       topic = "token_instances:#{token_contract_address_hash_string}"
 
       {:ok, _reply, _socket} =
-        BlockScoutWeb.UserSocketV2
+        BlockScoutWeb.V2.UserSocket
         |> socket("no_id", %{})
         |> subscribe_and_join(topic)
 
       request =
-        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{
-          "recaptcha_response" => "123"
-        })
+        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
 
       assert %{"message" => "OK"} = json_response(request, 200)
 
@@ -1588,58 +1996,75 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
       assert(token_instance_from_db)
       assert token_instance_from_db.metadata == metadata
 
-      Application.put_env(:explorer, :http_adapter, HTTPoison)
-    end
+      request =
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
 
-    test "don't fetch token instance metadata for non-existent token instance", %{
-      conn: conn,
-      v2_secret_key: v2_secret_key
-    } do
-      expected_body = "secret=#{v2_secret_key}&response=123"
+      assert json_response(request, 429)
 
-      Explorer.Mox.HTTPoison
-      |> expect(:post, fn _url, ^expected_body, _headers, _options ->
-        {:ok,
-         %HTTPoison.Response{
-           status_code: 200,
-           body:
-             Jason.encode!(%{
-               "success" => true,
-               "hostname" => Application.get_env(:block_scout_web, BlockScoutWeb.Endpoint)[:url][:host]
-             })
-         }}
-      end)
+      TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
 
-      token = insert(:token, type: "ERC-721")
-      token_id = 0
-
-      insert(:token_instance, token_id: token_id, token_contract_address_hash: token.contract_address_hash)
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body: Jason.encode!(metadata)
+           }}
+        end
+      )
 
       request =
-        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/1/refetch-metadata", %{
-          "recaptcha_response" => "123"
-        })
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> put_req_header("scoped-recaptcha-bypass-token", scoped_bypass_token)
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
 
-      assert %{"message" => "Not found"} = json_response(request, 404)
+      assert %{"message" => "OK"} = json_response(request, 200)
+
+      :timer.sleep(100)
+
+      assert_receive(
+        {:chain_event, :fetched_token_instance_metadata, :on_demand,
+         [^token_contract_address_hash_string, ^token_id, ^metadata]}
+      )
+
+      assert_receive %Phoenix.Socket.Message{
+                       payload: %{token_id: ^token_id, fetched_metadata: ^metadata},
+                       event: "fetched_token_instance_metadata",
+                       topic: ^topic
+                     },
+                     :timer.seconds(1)
+
+      token_instance_from_db =
+        Repo.get_by(Instance, token_id: token_id, token_contract_address_hash: token.contract_address_hash)
+
+      assert(token_instance_from_db)
+      assert token_instance_from_db.metadata == metadata
     end
 
-    test "fetch token instance metadata for existing token instance with no metadata", %{
+    test "falls back to normal reCAPTCHA when incorrect scoped bypass api key is supplied", %{
       conn: conn,
       v2_secret_key: v2_secret_key
     } do
-      expected_body = "secret=#{v2_secret_key}&response=123"
+      # Configure scoped bypass api key for this test
+      old_recaptcha_env = Application.get_env(:block_scout_web, :recaptcha)
+      scoped_bypass_token = "test_scoped_token_123"
 
-      Explorer.Mox.HTTPoison
-      |> expect(:post, fn _url, ^expected_body, _headers, _options ->
-        {:ok,
-         %HTTPoison.Response{
-           status_code: 200,
-           body:
-             Jason.encode!(%{
-               "success" => true,
-               "hostname" => Application.get_env(:block_scout_web, BlockScoutWeb.Endpoint)[:url][:host]
-             })
-         }}
+      Application.put_env(
+        :block_scout_web,
+        :recaptcha,
+        Keyword.merge(old_recaptcha_env,
+          scoped_bypass_tokens: [
+            token_instance_refetch_metadata: scoped_bypass_token
+          ]
+        )
+      )
+
+      on_exit(fn ->
+        Application.put_env(:block_scout_web, :recaptcha, old_recaptcha_env)
       end)
 
       token = insert(:token, type: "ERC-721")
@@ -1648,7 +2073,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
       insert(:token_instance,
         token_id: token_id,
         token_contract_address_hash: token.contract_address_hash,
-        metadata: nil
+        metadata: %{}
       )
 
       metadata = %{"name" => "Super Token"}
@@ -1657,24 +2082,75 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
 
       TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
 
-      Application.put_env(:explorer, :http_adapter, Explorer.Mox.HTTPoison)
+      request =
+        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
 
-      Explorer.Mox.HTTPoison
-      |> expect(:get, fn ^url, _headers, _options ->
-        {:ok, %HTTPoison.Response{status_code: 200, body: Jason.encode!(metadata)}}
-      end)
+      assert %{"message" => "OK"} = json_response(request, 200)
+
+      # First request after hitting rate limit with wrong scoped token - should fail
+      request =
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> put_req_header("scoped-recaptcha-bypass-token", "wrong_scoped_token")
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert %{"message" => "Too Many Requests"} = json_response(request, 429)
+
+      # Set up normal reCAPTCHA validation for the second request
+      expected_body = "secret=#{v2_secret_key}&response=correct_recaptcha_token"
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{body: ^expected_body}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body:
+               Jason.encode!(%{
+                 "success" => true,
+                 "hostname" => Application.get_env(:block_scout_web, BlockScoutWeb.Endpoint)[:url][:host]
+               })
+           }}
+        end
+      )
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body: Jason.encode!(%{"name" => "test"})
+           }}
+        end
+      )
+
+      TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body: Jason.encode!(metadata)
+           }}
+        end
+      )
 
       topic = "token_instances:#{token_contract_address_hash_string}"
 
       {:ok, _reply, _socket} =
-        BlockScoutWeb.UserSocketV2
+        BlockScoutWeb.V2.UserSocket
         |> socket("no_id", %{})
         |> subscribe_and_join(topic)
 
+      # Second request with correct reCAPTCHA token - should work
       request =
-        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{
-          "recaptcha_response" => "123"
-        })
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> put_req_header("recaptcha-v2-response", "correct_recaptcha_token")
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
 
       assert %{"message" => "OK"} = json_response(request, 200)
 
@@ -1685,20 +2161,137 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
          [^token_contract_address_hash_string, ^token_id, ^metadata]}
       )
 
-      assert_receive %Phoenix.Socket.Message{
-                       payload: %{token_id: ^token_id, fetched_metadata: ^metadata},
-                       event: "fetched_token_instance_metadata",
-                       topic: ^topic
-                     },
-                     :timer.seconds(1)
-
       token_instance_from_db =
         Repo.get_by(Instance, token_id: token_id, token_contract_address_hash: token.contract_address_hash)
 
       assert(token_instance_from_db)
       assert token_instance_from_db.metadata == metadata
+    end
 
-      Application.put_env(:explorer, :http_adapter, HTTPoison)
+    test "rejects scoped bypass api key when scoped tokens are not configured", %{
+      conn: conn,
+      v2_secret_key: v2_secret_key
+    } do
+      # Make sure we don't have scoped tokens configured
+      old_recaptcha_env = Application.get_env(:block_scout_web, :recaptcha)
+
+      # Ensure there are no scoped_bypass_tokens in the configuration
+      Application.put_env(
+        :block_scout_web,
+        :recaptcha,
+        Keyword.merge(old_recaptcha_env,
+          scoped_bypass_tokens: [
+            token_instance_refetch_metadata: nil
+          ]
+        )
+      )
+
+      on_exit(fn ->
+        Application.put_env(:block_scout_web, :recaptcha, old_recaptcha_env)
+      end)
+
+      token = insert(:token, type: "ERC-721")
+      token_id = 1
+
+      insert(:token_instance,
+        token_id: token_id,
+        token_contract_address_hash: token.contract_address_hash,
+        metadata: %{}
+      )
+
+      metadata = %{"name" => "Super Token"}
+      url = "http://metadata.endpoint.com"
+      token_contract_address_hash_string = to_string(token.contract_address_hash)
+      TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
+
+      request =
+        patch(conn, "/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert %{"message" => "OK"} = json_response(request, 200)
+
+      # First request after hitting rate limit with a scoped token that isn't configured - should fail
+      request =
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> put_req_header("scoped-recaptcha-bypass-token", "some_token_that_does_not_exist")
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert %{"message" => "Too Many Requests"} = json_response(request, 429)
+
+      request =
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> put_req_header("scoped-recaptcha-bypass-token", "some_token_that_does_not_exist")
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert %{"message" => "Too Many Requests"} = json_response(request, 429)
+
+      request =
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> put_req_header("scoped-recaptcha-bypass-token", "")
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert %{"message" => "Too Many Requests"} = json_response(request, 429)
+
+      # Set up normal reCAPTCHA validation for the second request
+      expected_body = "secret=#{v2_secret_key}&response=correct_recaptcha_token"
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{body: ^expected_body}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body:
+               Jason.encode!(%{
+                 "success" => true,
+                 "hostname" => Application.get_env(:block_scout_web, BlockScoutWeb.Endpoint)[:url][:host]
+               })
+           }}
+        end
+      )
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body: Jason.encode!(%{"name" => "test"})
+           }}
+        end
+      )
+
+      TestHelper.fetch_token_uri_mock(url, token_contract_address_hash_string)
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{url: ^url}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body: Jason.encode!(metadata)
+           }}
+        end
+      )
+
+      # Second request with correct reCAPTCHA token - should work
+      request =
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("user-agent", "test-agent")
+        |> put_req_header("recaptcha-v2-response", "correct_recaptcha_token")
+        |> patch("/api/v2/tokens/#{token.contract_address.hash}/instances/#{token_id}/refetch-metadata", %{})
+
+      assert %{"message" => "OK"} = json_response(request, 200)
+
+      :timer.sleep(100)
+
+      token_instance_from_db =
+        Repo.get_by(Instance, token_id: token_id, token_contract_address_hash: token.contract_address.hash)
+
+      assert(token_instance_from_db)
+      assert token_instance_from_db.metadata == metadata
     end
   end
 
@@ -1771,19 +2364,25 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
     end
   end
 
+  defp compare_holders_item(%CurrentTokenBalance{} = ctb, json) do
+    assert Address.checksum(ctb.address_hash) == json["address"]["hash"]
+    assert (ctb.token_id && to_string(ctb.token_id)) == json["token_id"]
+    assert to_string(ctb.value) == json["value"]
+  end
+
   def compare_item(%Address{} = address, json) do
     assert Address.checksum(address.hash) == json["hash"]
   end
 
   def compare_item(%Token{} = token, json) do
-    assert Address.checksum(token.contract_address.hash) == json["address"]
+    assert Address.checksum(token.contract_address.hash) == json["address_hash"]
     assert token.symbol == json["symbol"]
     assert token.name == json["name"]
     assert to_string(token.decimals) == json["decimals"]
     assert token.type == json["type"]
 
-    assert (is_nil(token.holder_count) and is_nil(json["holders"])) or
-             (to_string(token.holder_count) == json["holders"] and !is_nil(token.holder_count))
+    assert (is_nil(token.holder_count) and is_nil(json["holders_count"])) or
+             (to_string(token.holder_count) == json["holders_count"] and !is_nil(token.holder_count))
 
     assert to_string(token.total_supply) == json["total_supply"]
     assert Map.has_key?(json, "exchange_rate")
@@ -1801,9 +2400,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
   end
 
   def compare_item(%CurrentTokenBalance{} = ctb, json) do
-    assert Address.checksum(ctb.address_hash) == json["address"]["hash"]
-    assert (ctb.token_id && to_string(ctb.token_id)) == json["token_id"]
-    assert to_string(ctb.value) == json["value"]
+    compare_holders_item(ctb, json)
     compare_item(Repo.preload(ctb, [{:token, :contract_address}]).token, json["token"])
   end
 
@@ -1826,7 +2423,7 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
              "value" => ^value,
              "id" => ^id,
              "metadata" => ^metadata,
-             "token" => %{"address" => ^token_address_hash, "name" => ^token_name, "type" => ^token_type},
+             "token" => %{"address_hash" => ^token_address_hash, "name" => ^token_name, "type" => ^token_type},
              "external_app_url" => ^app_url,
              "animation_url" => ^animation_url,
              "image_url" => ^image_url,
@@ -1876,5 +2473,188 @@ defmodule BlockScoutWeb.API.V2.TokenControllerTest do
     assert Enum.count(second_page_resp["items"]) == 1
     assert second_page_resp["next_page_params"] == nil
     compare_item(Enum.at(list, 0), Enum.at(second_page_resp["items"], 0))
+  end
+
+  defp check_holders_paginated_response(first_page_resp, second_page_resp, list) do
+    assert Enum.count(first_page_resp["items"]) == 50
+    assert first_page_resp["next_page_params"] != nil
+    compare_holders_item(Enum.at(list, 50), Enum.at(first_page_resp["items"], 0))
+    compare_holders_item(Enum.at(list, 1), Enum.at(first_page_resp["items"], 49))
+
+    assert Enum.count(second_page_resp["items"]) == 1
+    assert second_page_resp["next_page_params"] == nil
+    compare_holders_item(Enum.at(list, 0), Enum.at(second_page_resp["items"], 0))
+  end
+
+  if @bridged_tokens_enabled do
+    describe "/tokens/bridged" do
+      test "returns empty list when no bridged tokens", %{conn: conn} do
+        request = get(conn, "/api/v2/tokens/bridged")
+
+        assert %{"items" => [], "next_page_params" => nil} = json_response(request, 200)
+      end
+
+      test "returns bridged tokens list", %{conn: conn} do
+        # Create a token
+        token = insert(:token, %{total_supply: 1000})
+
+        # Update token to set bridged flag directly in the database
+        Explorer.Repo.update_all(
+          from(t in Explorer.Chain.Token, where: t.contract_address_hash == ^token.contract_address_hash),
+          set: [bridged: true]
+        )
+
+        # Create a bridged token record
+        {:ok, _bridged_token} =
+          Explorer.Repo.insert(%Explorer.Chain.BridgedToken{
+            home_token_contract_address_hash: token.contract_address_hash,
+            foreign_chain_id: 1,
+            foreign_token_contract_address_hash: build(:address).hash,
+            type: "omni",
+            exchange_rate: Decimal.new("1.5")
+          })
+
+        request = get(conn, "/api/v2/tokens/bridged")
+
+        assert response = json_response(request, 200)
+        assert %{"items" => items, "next_page_params" => _} = response
+        assert length(items) == 1
+
+        item = List.first(items)
+        assert item["address_hash"] == Address.checksum(token.contract_address_hash)
+        assert item["name"] == token.name
+        assert item["symbol"] == token.symbol
+        assert item["bridge_type"] == "omni"
+        assert item["origin_chain_id"] == "1"
+        assert is_binary(item["foreign_address"])
+      end
+
+      test "filters bridged tokens by search query", %{conn: conn} do
+        # Create first token
+        token1 = insert(:token, %{total_supply: 1000, name: "TestToken", symbol: "TEST"})
+
+        Explorer.Repo.update_all(
+          from(t in Explorer.Chain.Token, where: t.contract_address_hash == ^token1.contract_address_hash),
+          set: [bridged: true]
+        )
+
+        {:ok, _bridged_token1} =
+          Explorer.Repo.insert(%Explorer.Chain.BridgedToken{
+            home_token_contract_address_hash: token1.contract_address_hash,
+            foreign_chain_id: 1,
+            foreign_token_contract_address_hash: build(:address).hash,
+            type: "omni"
+          })
+
+        # Create second token with different name
+        token2 = insert(:token, %{total_supply: 2000, name: "OtherToken", symbol: "OTHER"})
+
+        Explorer.Repo.update_all(
+          from(t in Explorer.Chain.Token, where: t.contract_address_hash == ^token2.contract_address_hash),
+          set: [bridged: true]
+        )
+
+        {:ok, _bridged_token2} =
+          Explorer.Repo.insert(%Explorer.Chain.BridgedToken{
+            home_token_contract_address_hash: token2.contract_address_hash,
+            foreign_chain_id: 1,
+            foreign_token_contract_address_hash: build(:address).hash,
+            type: "amb"
+          })
+
+        # Search for "Test"
+        request = get(conn, "/api/v2/tokens/bridged", %{"q" => "Test"})
+
+        assert response = json_response(request, 200)
+        assert %{"items" => items} = response
+        assert length(items) == 1
+
+        item = List.first(items)
+        assert item["name"] == "TestToken"
+        assert item["symbol"] == "TEST"
+      end
+
+      test "filters bridged tokens by chain ids", %{conn: conn} do
+        # Create tokens on different chains
+        token1 = insert(:token, %{total_supply: 1000})
+
+        Explorer.Repo.update_all(
+          from(t in Explorer.Chain.Token, where: t.contract_address_hash == ^token1.contract_address_hash),
+          set: [bridged: true]
+        )
+
+        {:ok, _bridged_token1} =
+          Explorer.Repo.insert(%Explorer.Chain.BridgedToken{
+            home_token_contract_address_hash: token1.contract_address_hash,
+            foreign_chain_id: 1,
+            foreign_token_contract_address_hash: build(:address).hash,
+            type: "omni"
+          })
+
+        token2 = insert(:token, %{total_supply: 2000})
+
+        Explorer.Repo.update_all(
+          from(t in Explorer.Chain.Token, where: t.contract_address_hash == ^token2.contract_address_hash),
+          set: [bridged: true]
+        )
+
+        {:ok, _bridged_token2} =
+          Explorer.Repo.insert(%Explorer.Chain.BridgedToken{
+            home_token_contract_address_hash: token2.contract_address_hash,
+            foreign_chain_id: 56,
+            foreign_token_contract_address_hash: build(:address).hash,
+            type: "amb"
+          })
+
+        # Filter by chain id 1
+        request = get(conn, "/api/v2/tokens/bridged", %{"chain_ids" => "1"})
+
+        assert response = json_response(request, 200)
+        assert %{"items" => items} = response
+        assert length(items) == 1
+
+        item = List.first(items)
+        assert item["origin_chain_id"] == "1"
+      end
+
+      test "supports pagination", %{conn: conn} do
+        # Create 51 bridged tokens to trigger pagination (default page size is 50)
+        _tokens =
+          for i <- 1..51 do
+            token = insert(:token, %{total_supply: 1000 * i, name: "Token#{i}", symbol: "T#{i}"})
+
+            Explorer.Repo.update_all(
+              from(t in Explorer.Chain.Token, where: t.contract_address_hash == ^token.contract_address_hash),
+              set: [bridged: true]
+            )
+
+            {:ok, _bridged_token} =
+              Explorer.Repo.insert(%Explorer.Chain.BridgedToken{
+                home_token_contract_address_hash: token.contract_address_hash,
+                foreign_chain_id: 1,
+                foreign_token_contract_address_hash: build(:address).hash,
+                type: "omni"
+              })
+
+            token
+          end
+
+        # Test first page (should have 50 items and next_page_params)
+        request = get(conn, "/api/v2/tokens/bridged")
+
+        assert response = json_response(request, 200)
+        assert %{"items" => items, "next_page_params" => next_page_params} = response
+        assert length(items) == 50
+        assert next_page_params != nil
+
+        # Test second page (should have 1 item and no next_page_params)
+        request = get(conn, "/api/v2/tokens/bridged", next_page_params)
+
+        assert response = json_response(request, 200)
+        assert %{"items" => items, "next_page_params" => next_page_params} = response
+        assert length(items) == 1
+        assert next_page_params == nil
+      end
+    end
   end
 end

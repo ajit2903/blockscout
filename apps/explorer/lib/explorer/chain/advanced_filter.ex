@@ -8,8 +8,20 @@ defmodule Explorer.Chain.AdvancedFilter do
   import Ecto.Query
   import Explorer.Chain.SmartContract.Proxy.Models.Implementation, only: [proxy_implementations_association: 0]
 
+  alias Explorer.Helper, as: ExplorerHelper
   alias Explorer.{Chain, Helper, PagingOptions}
-  alias Explorer.Chain.{Address, Data, DenormalizationHelper, Hash, InternalTransaction, TokenTransfer, Transaction}
+
+  alias Explorer.Chain.{
+    Address,
+    Address.Reputation,
+    Data,
+    DenormalizationHelper,
+    Hash,
+    InternalTransaction,
+    TokenTransfer,
+    Transaction
+  }
+
   alias Explorer.Chain.Block.Reader.General, as: BlockGeneralReader
 
   @primary_key false
@@ -504,10 +516,11 @@ defmodule Explorer.Chain.AdvancedFilter do
       |> page_token_transfers(paging_options)
 
     token_transfer_query
+    |> ExplorerHelper.maybe_hide_scam_addresses(:token_contract_address_hash, options)
     |> limit_query(paging_options)
     |> query_function.(false)
     |> limit_query(paging_options)
-    |> preload([:transaction, :token])
+    |> preload([:transaction, [token: ^Reputation.reputation_association()]])
     |> select_merge([token_transfer], %{token_ids: [token_transfer.token_id], amounts: [token_transfer.amount]})
   end
 

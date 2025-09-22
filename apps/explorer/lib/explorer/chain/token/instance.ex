@@ -5,11 +5,12 @@ defmodule Explorer.Chain.Token.Instance do
 
   use Explorer.Schema
 
-  alias Explorer.{Chain, Helper, Repo}
+  alias Explorer.{Chain, Helper, QueryHelper, Repo}
   alias Explorer.Chain.{Address, Hash, Token, TokenTransfer, Transaction}
-  alias Explorer.Chain.Address.CurrentTokenBalance
+  alias Explorer.Chain.Address.{CurrentTokenBalance, Reputation}
   alias Explorer.Chain.SmartContract.Proxy.Models.Implementation
   alias Explorer.Chain.Token.Instance.Thumbnails
+  alias Explorer.Helper, as: ExplorerHelper
   alias Explorer.PagingOptions
 
   @default_page_size 50
@@ -32,6 +33,8 @@ defmodule Explorer.Chain.Token.Instance do
   * `thumbnails` - info for deriving thumbnails urls. Stored as array: [file_path, sizes, original_uploaded?]
   * `media_type` - mime type of media
   * `cdn_upload_error` - error while processing(resizing)/uploading media to CDN
+  * `metadata_url` - URL where metadata is fetched from
+  * `skip_metadata_url` - bool flag indicating if metadata_url intentionally skipped
   """
   @primary_key false
   typed_schema "token_instances" do
@@ -48,6 +51,8 @@ defmodule Explorer.Chain.Token.Instance do
     field(:thumbnails, Thumbnails)
     field(:media_type, :string)
     field(:cdn_upload_error, :string)
+    field(:metadata_url, :string)
+    field(:skip_metadata_url, :boolean)
 
     belongs_to(:owner, Address, foreign_key: :owner_address_hash, references: :hash, type: Hash.Address)
 
@@ -79,7 +84,9 @@ defmodule Explorer.Chain.Token.Instance do
       :is_banned,
       :thumbnails,
       :media_type,
-      :cdn_upload_error
+      :cdn_upload_error,
+      :metadata_url,
+      :skip_metadata_url
     ])
     |> validate_required([:token_id, :token_contract_address_hash])
     |> foreign_key_constraint(:token_contract_address_hash)
@@ -127,47 +134,107 @@ defmodule Explorer.Chain.Token.Instance do
     do:
       from(i in __MODULE__, where: i.token_contract_address_hash == ^token_contract_address and i.token_id == ^token_id)
 
-  @spec nft_list(binary() | Hash.Address.t(), keyword()) :: [__MODULE__.t()]
-  def nft_list(address_hash, options \\ [])
-
-  def nft_list(address_hash, options) when is_list(options) do
-    nft_list(address_hash, Keyword.get(options, :token_type, []), options)
-  end
-
-  defp nft_list(address_hash, ["ERC-721"], options) do
-    erc_721_token_instances_by_owner_address_hash(address_hash, options)
-  end
-
-  defp nft_list(address_hash, ["ERC-1155"], options) do
-    erc_1155_token_instances_by_address_hash(address_hash, options)
-  end
-
-  defp nft_list(address_hash, ["ERC-404"], options) do
-    erc_404_token_instances_by_address_hash(address_hash, options)
-  end
-
-  defp nft_list(address_hash, _, options) do
+  @spec page_nft_list(
+          binary() | Hash.Address.t(),
+          keyword(),
+          (PagingOptions.t() -> String.t() | nil),
+          %{
+            String.t() => (binary()
+                           | Hash.Address.t(),
+                           keyword() ->
+                             [any()])
+          }
+        ) :: [any()]
+  defp page_nft_list(address_hash, options, get_type, type_to_fetch_func) when is_list(options) do
     paging_options = Keyword.get(options, :paging_options, Chain.default_paging_options())
+    page_size = paging_options.page_size
+    remaining_types = remaining_token_types(options, get_type)
 
-    case paging_options do
-      %PagingOptions{key: {_contract_address_hash, _token_id, "ERC-1155"}} ->
-        erc_1155_token_instances_by_address_hash(address_hash, options)
+    {acc, _filled} =
+      Enum.reduce_while(remaining_types, {[], 0}, fn type, {list, count} ->
+        options =
+          if Enum.empty?(list) do
+            options
+          else
+            Keyword.put(options, :paging_options, %PagingOptions{
+              page_size: page_size - count
+            })
+          end
 
-      %PagingOptions{key: {_contract_address_hash, _token_id, "ERC-404"}} ->
-        erc_404_token_instances_by_address_hash(address_hash, options)
+        fetch = Map.get(type_to_fetch_func, type, fn _, _ -> [] end)
+        fetched = fetch.(address_hash, options)
+        new_list = list ++ fetched
+        new_count = count + length(fetched)
+
+        if new_count >= page_size do
+          {:halt, {Enum.take(new_list, page_size), page_size}}
+        else
+          {:cont, {new_list, new_count}}
+        end
+      end)
+
+    acc
+  end
+
+  @spec remaining_token_types(keyword(), (PagingOptions.t() -> String.t() | nil)) :: [String.t()]
+  defp remaining_token_types(options, get_type) do
+    token_types =
+      options
+      |> Keyword.get(:token_type, [])
+      |> then(fn types ->
+        if Enum.empty?(types) do
+          Token.allowed_nft_type_labels()
+        else
+          Token.allowed_nft_type_labels() |> Enum.filter(&(&1 in types))
+        end
+      end)
+
+    options
+    |> Keyword.get(:paging_options, Chain.default_paging_options())
+    |> get_type.()
+    |> case do
+      type when is_binary(type) ->
+        Enum.drop_while(token_types, &(&1 != type))
 
       _ ->
-        erc_721 = erc_721_token_instances_by_owner_address_hash(address_hash, options)
-
-        if length(erc_721) == paging_options.page_size do
-          erc_721
-        else
-          erc_1155 = erc_1155_token_instances_by_address_hash(address_hash, options)
-          erc_404 = erc_404_token_instances_by_address_hash(address_hash, options)
-
-          (erc_721 ++ erc_1155 ++ erc_404) |> Enum.take(paging_options.page_size)
-        end
+        token_types
     end
+  end
+
+  @doc """
+  Paginated NFT instances owned by an address.
+
+  ## Notes
+  * Filter: `:token_type` list (empty or omitted = all).
+  * Pagination key: `{token_contract_address_hash, token_id, token_type}`.
+  * Resumes at the key's type; earlier types skipped.
+  * Fills one page sequentially across types; spillover allowed.
+
+  ## Params
+  * `address_hash` - owner address (binary or `Hash.Address`).
+  * `options` (keyword):
+    - `:paging_options` (%PagingOptions{}; default `Chain.default_paging_options/0`).
+    - `:token_type` (list of labels) filter.
+    - `:necessity_by_association` pass-through for joins.
+
+  ## Returns
+  * list (<= page_size) of `%Explorer.Chain.Token.Instance{}`; empty list if none.
+  """
+  @spec nft_list(binary() | Hash.Address.t(), keyword()) :: [__MODULE__.t()]
+  def nft_list(address_hash, options) when is_list(options) do
+    page_nft_list(
+      address_hash,
+      options,
+      fn
+        %PagingOptions{key: {_, _, type}} -> type
+        _ -> nil
+      end,
+      %{
+        "ERC-721" => &erc_721_token_instances_by_owner_address_hash/2,
+        "ERC-1155" => &erc_1155_token_instances_by_address_hash/2,
+        "ERC-404" => &erc_404_token_instances_by_address_hash/2
+      }
+    )
   end
 
   @doc """
@@ -188,6 +255,7 @@ defmodule Explorer.Chain.Token.Instance do
         |> where([ti], ti.owner_address_hash == ^address_hash)
         |> order_by([ti], asc: ti.token_contract_address_hash, desc: ti.token_id)
         |> limit(^paging_options.page_size)
+        |> ExplorerHelper.maybe_hide_scam_addresses(:token_contract_address_hash, options)
         |> page_erc_721_token_instances(paging_options)
         |> Chain.join_associations(necessity_by_association)
         |> Chain.select_repo(options).all()
@@ -221,6 +289,7 @@ defmodule Explorer.Chain.Token.Instance do
         |> where([ctb: ctb], ctb.value > 0 and ctb.token_type == "ERC-1155")
         |> order_by([ti], asc: ti.token_contract_address_hash, desc: ti.token_id)
         |> limit(^paging_options.page_size)
+        |> ExplorerHelper.maybe_hide_scam_addresses(:token_contract_address_hash, options)
         |> page_erc_1155_token_instances(paging_options)
         |> select_merge([ctb: ctb], %{current_token_balance: ctb})
         |> Chain.join_associations(necessity_by_association)
@@ -255,6 +324,7 @@ defmodule Explorer.Chain.Token.Instance do
         |> where([ctb: ctb], ctb.value > 0 and ctb.token_type == "ERC-404")
         |> order_by([ti], asc: ti.token_contract_address_hash, desc: ti.token_id)
         |> limit(^paging_options.page_size)
+        |> ExplorerHelper.maybe_hide_scam_addresses(:token_contract_address_hash, options)
         |> page_erc_404_token_instances(paging_options)
         |> select_merge([ctb: ctb], %{current_token_balance: ctb})
         |> Chain.join_associations(necessity_by_association)
@@ -280,63 +350,40 @@ defmodule Explorer.Chain.Token.Instance do
   @doc """
     Function to be used in BlockScoutWeb.Chain.next_page_params/4
   """
-  @spec nft_list_next_page_params(__MODULE__.t()) :: %{binary() => any}
+  @spec nft_list_next_page_params(__MODULE__.t()) :: %{atom() => any}
   def nft_list_next_page_params(%__MODULE__{
         current_token_balance: %CurrentTokenBalance{},
         token_contract_address_hash: token_contract_address_hash,
         token_id: token_id,
         token: token
       }) do
-    %{"token_contract_address_hash" => token_contract_address_hash, "token_id" => token_id, "token_type" => token.type}
+    %{token_contract_address_hash: token_contract_address_hash, token_id: token_id, token_type: token.type}
   end
 
   def nft_list_next_page_params(%__MODULE__{
         token_contract_address_hash: token_contract_address_hash,
         token_id: token_id
       }) do
-    %{"token_contract_address_hash" => token_contract_address_hash, "token_id" => token_id, "token_type" => "ERC-721"}
+    %{token_contract_address_hash: token_contract_address_hash, token_id: token_id, token_type: "ERC-721"}
   end
 
   @preloaded_nfts_limit 9
 
-  @spec nft_collections(binary() | Hash.Address.t(), keyword) :: list
-  def nft_collections(address_hash, options \\ [])
-
+  @spec nft_collections(binary() | Hash.Address.t(), keyword()) :: [CurrentTokenBalance.t()]
   def nft_collections(address_hash, options) when is_list(options) do
-    nft_collections(address_hash, Keyword.get(options, :token_type, []), options)
-  end
-
-  defp nft_collections(address_hash, ["ERC-721"], options) do
-    erc_721_collections_by_address_hash(address_hash, options)
-  end
-
-  defp nft_collections(address_hash, ["ERC-1155"], options) do
-    erc_1155_collections_by_address_hash(address_hash, options)
-  end
-
-  defp nft_collections(address_hash, ["ERC-404"], options) do
-    erc_404_collections_by_address_hash(address_hash, options)
-  end
-
-  defp nft_collections(address_hash, _, options) do
-    paging_options = Keyword.get(options, :paging_options, Chain.default_paging_options())
-
-    case paging_options do
-      %PagingOptions{key: {_contract_address_hash, "ERC-1155"}} ->
-        erc_1155_collections_by_address_hash(address_hash, options)
-
-      _ ->
-        erc_721 = erc_721_collections_by_address_hash(address_hash, options)
-
-        if length(erc_721) == paging_options.page_size do
-          erc_721
-        else
-          erc_1155 = erc_1155_collections_by_address_hash(address_hash, options)
-          erc_404 = erc_404_collections_by_address_hash(address_hash, options)
-
-          (erc_721 ++ erc_1155 ++ erc_404) |> Enum.take(paging_options.page_size)
-        end
-    end
+    page_nft_list(
+      address_hash,
+      options,
+      fn
+        %PagingOptions{key: {_, type}} -> type
+        _ -> nil
+      end,
+      %{
+        "ERC-721" => &erc_721_collections_by_address_hash/2,
+        "ERC-1155" => &erc_1155_collections_by_address_hash/2,
+        "ERC-404" => &erc_404_collections_by_address_hash/2
+      }
+    )
   end
 
   @spec erc_721_collections_by_address_hash(binary() | Hash.Address.t(), keyword) :: [CurrentTokenBalance.t()]
@@ -346,6 +393,7 @@ defmodule Explorer.Chain.Token.Instance do
 
     CurrentTokenBalance
     |> where([ctb], ctb.address_hash == ^address_hash and ctb.value > 0 and ctb.token_type == "ERC-721")
+    |> ExplorerHelper.maybe_hide_scam_addresses(:token_contract_address_hash, options)
     |> order_by([ctb], asc: ctb.token_contract_address_hash)
     |> page_erc_721_nft_collections(paging_options)
     |> limit(^paging_options.page_size)
@@ -379,11 +427,19 @@ defmodule Explorer.Chain.Token.Instance do
       distinct_token_instances_count: fragment("COUNT(*)"),
       token_ids: fragment("array_agg(?)", ctb.token_id)
     })
+    |> ExplorerHelper.maybe_hide_scam_addresses(:token_contract_address_hash, options)
     |> page_erc_1155_nft_collections(paging_options)
     |> limit(^paging_options.page_size)
     |> Chain.select_repo(options).all()
     |> Enum.map(&erc_1155_preload_nft(&1, address_hash, options))
-    |> Helper.custom_preload(options, Token, :token_contract_address_hash, :contract_address_hash, :token)
+    |> Helper.custom_preload(
+      options,
+      Token,
+      :token_contract_address_hash,
+      :contract_address_hash,
+      :token,
+      Reputation.reputation_association()
+    )
   end
 
   defp page_erc_1155_nft_collections(query, %PagingOptions{key: {contract_address_hash, "ERC-1155"}}) do
@@ -411,11 +467,19 @@ defmodule Explorer.Chain.Token.Instance do
       distinct_token_instances_count: fragment("COUNT(*)"),
       token_ids: fragment("array_agg(?)", ctb.token_id)
     })
+    |> ExplorerHelper.maybe_hide_scam_addresses(:token_contract_address_hash, options)
     |> page_erc_404_nft_collections(paging_options)
     |> limit(^paging_options.page_size)
     |> Chain.select_repo(options).all()
     |> Enum.map(&erc_1155_preload_nft(&1, address_hash, options))
-    |> Helper.custom_preload(options, Token, :token_contract_address_hash, :contract_address_hash, :token)
+    |> Helper.custom_preload(
+      options,
+      Token,
+      :token_contract_address_hash,
+      :contract_address_hash,
+      :token,
+      Reputation.reputation_association()
+    )
   end
 
   defp page_erc_404_nft_collections(query, %PagingOptions{key: {contract_address_hash, "ERC-404"}}) do
@@ -475,20 +539,20 @@ defmodule Explorer.Chain.Token.Instance do
     Function to be used in BlockScoutWeb.Chain.next_page_params/4
   """
   @spec nft_collections_next_page_params(%{:token_contract_address_hash => any, optional(any) => any}) :: %{
-          binary() => any
+          atom() => any
         }
   def nft_collections_next_page_params(%{
         token_contract_address_hash: token_contract_address_hash,
         token: %Token{type: token_type}
       }) do
-    %{"token_contract_address_hash" => token_contract_address_hash, "token_type" => token_type}
+    %{token_contract_address_hash: token_contract_address_hash, token_type: token_type}
   end
 
   def nft_collections_next_page_params(%{
         token_contract_address_hash: token_contract_address_hash,
         token_type: token_type
       }) do
-    %{"token_contract_address_hash" => token_contract_address_hash, "token_type" => token_type}
+    %{token_contract_address_hash: token_contract_address_hash, token_type: token_type}
   end
 
   @spec token_instances_by_holder_address_hash(Token.t(), binary() | Hash.Address.t(), keyword) :: [__MODULE__.t()]
@@ -645,7 +709,8 @@ defmodule Explorer.Chain.Token.Instance do
   Sets metadata for the given Explorer.Chain.Token.Instance
   """
   @spec set_metadata(t(), map()) :: {non_neg_integer(), nil}
-  def set_metadata(token_instance, metadata) when is_map(metadata) do
+  def set_metadata(token_instance, %{metadata: metadata, skip_metadata_url: skip_metadata_url} = result)
+      when is_map(metadata) do
     now = DateTime.utc_now()
 
     Repo.update_all(
@@ -653,7 +718,18 @@ defmodule Explorer.Chain.Token.Instance do
         where: instance.token_contract_address_hash == ^token_instance.token_contract_address_hash,
         where: instance.token_id == ^token_instance.token_id
       ),
-      [set: [metadata: metadata, error: nil, updated_at: now, thumbnails: nil, media_type: nil, cdn_upload_error: nil]],
+      [
+        set: [
+          metadata: metadata,
+          error: nil,
+          updated_at: now,
+          thumbnails: nil,
+          media_type: nil,
+          cdn_upload_error: nil,
+          skip_metadata_url: skip_metadata_url,
+          metadata_url: result[:metadata_url]
+        ]
+      ],
       timeout: @timeout
     )
   end
@@ -664,7 +740,6 @@ defmodule Explorer.Chain.Token.Instance do
       "VM execution error",
       "request error: 404",
       "no uri",
-      "ignored host",
       "(-32000)",
       "invalid ",
       "{:max_redirect_overflow, ",
@@ -672,7 +747,8 @@ defmodule Explorer.Chain.Token.Instance do
       "nxdomain",
       ":nxdomain",
       "econnrefused",
-      ":econnrefused"
+      ":econnrefused",
+      "blacklist"
     ],
     # 32767 is the maximum value for retries_count (smallint)
     @max_retries_count_value => ["request error: 429"]
@@ -750,60 +826,18 @@ defmodule Explorer.Chain.Token.Instance do
 
   def get_media_url_from_metadata_for_nft_media_handler(nil), do: nil
 
-  @doc """
-  Sets the media URLs for a given token.
+  @spec batch_upsert_cdn_results([map()]) :: [t()]
+  def batch_upsert_cdn_results([]), do: []
 
-  ## Parameters
+  def batch_upsert_cdn_results(instances) do
+    {_, result} =
+      Repo.insert_all(__MODULE__, instances,
+        on_conflict: {:replace, [:thumbnails, :media_type, :updated_at, :cdn_upload_error]},
+        conflict_target: [:token_id, :token_contract_address_hash],
+        returning: true
+      )
 
-    - `token_contract_address_hash`: The hash of the token contract address.
-    - `token_id`: The ID of the token.
-    - `urls`: list of Explorer.Chain.Token.Instance.Thumbnails format
-    - `media_type`: The type of media associated with the URLs.
-
-  ## Examples
-
-      iex> set_media_urls({"0x1234", 1}, ["/folder_1/0004dfda159ea2def5098bf8f19f5f27207f4e1f_{}.png", [60, 250, 500], true], {"image", "png"})
-      :ok
-
-  """
-  @spec set_media_urls({Hash.Address.t(), non_neg_integer() | Decimal.t()}, list(), {binary(), binary()}) ::
-          any()
-  def set_media_urls({token_contract_address_hash, token_id}, urls, media_type) do
-    now = DateTime.utc_now()
-
-    token_id
-    |> token_instance_query(token_contract_address_hash)
-    |> Repo.update_all(
-      [set: [thumbnails: urls, media_type: media_type_to_string(media_type), updated_at: now]],
-      timeout: @timeout
-    )
-  end
-
-  @doc """
-  Sets the CDN upload error for a given token.
-
-  ## Parameters
-
-    - `token_contract_address_hash`: The hash of the token contract address.
-    - `token_id`: The ID of the token.
-    - `error`: The error message to be set.
-
-  ## Examples
-
-      iex> set_cdn_upload_error({"0x1234", 1}, "Upload failed")
-      :ok
-
-  """
-  @spec set_cdn_upload_error({Hash.Address.t(), non_neg_integer() | Decimal.t()}, binary()) :: any()
-  def set_cdn_upload_error({token_contract_address_hash, token_id}, error) do
-    now = DateTime.utc_now()
-
-    token_id
-    |> token_instance_query(token_contract_address_hash)
-    |> Repo.update_all(
-      [set: [cdn_upload_error: error, updated_at: now]],
-      timeout: @timeout
-    )
+    result
   end
 
   @doc """
@@ -818,47 +852,6 @@ defmodule Explorer.Chain.Token.Instance do
     __MODULE__
     |> where([ti], not is_nil(ti.metadata) and is_nil(ti.thumbnails) and is_nil(ti.cdn_upload_error))
     |> Repo.stream_each(each_fun)
-  end
-
-  @doc """
-  Sets the CDN result for a given token.
-
-  ## Parameters
-
-    - `token_contract_address_hash`: The hash of the token contract address.
-    - `token_id`: The ID of the token.
-    - `params`: A map containing the parameters for the CDN result.
-
-  ## Returns
-
-    - The result of setting the CDN for the given token instance.
-
-  """
-  @spec set_cdn_result({Hash.Address.t(), non_neg_integer() | Decimal.t()}, %{
-          :cdn_upload_error => any(),
-          :media_type => any(),
-          :thumbnails => any()
-        }) :: any()
-  def set_cdn_result({token_contract_address_hash, token_id}, %{
-        thumbnails: thumbnails,
-        media_type: media_type,
-        cdn_upload_error: cdn_upload_error
-      }) do
-    now = DateTime.utc_now()
-
-    token_id
-    |> token_instance_query(token_contract_address_hash)
-    |> Repo.update_all(
-      [
-        set: [
-          cdn_upload_error: cdn_upload_error,
-          thumbnails: thumbnails,
-          media_type: media_type,
-          updated_at: now
-        ]
-      ],
-      timeout: @timeout
-    )
   end
 
   @doc """
@@ -909,12 +902,7 @@ defmodule Explorer.Chain.Token.Instance do
       __MODULE__
       |> where(
         [nft],
-        fragment(
-          "(?, ?) = ANY(?::token_instance_id[])",
-          nft.token_id,
-          nft.token_contract_address_hash,
-          ^token_instances_id
-        )
+        ^QueryHelper.tuple_in([:token_id, :token_contract_address_hash], token_instances_id)
       )
       |> Chain.select_repo(options).all()
       |> Enum.reduce(%{}, fn nft, map ->
@@ -970,13 +958,7 @@ defmodule Explorer.Chain.Token.Instance do
 
     existing_token_instances_query =
       from(token_instance in __MODULE__,
-        where:
-          fragment(
-            "(?, ?) = ANY(?::token_instance_id[])",
-            token_instance.token_id,
-            token_instance.token_contract_address_hash,
-            ^token_instance_ids
-          )
+        where: ^QueryHelper.tuple_in([:token_id, :token_contract_address_hash], token_instance_ids)
       )
 
     existing_token_instances_map =
@@ -1044,7 +1026,19 @@ defmodule Explorer.Chain.Token.Instance do
       from(instance in __MODULE__,
         where: instance.token_contract_address_hash == ^token_contract_address_hash
       ),
-      [set: [metadata: nil, error: @marked_to_refetch, updated_at: now]],
+      [
+        set: [
+          metadata: nil,
+          error: @marked_to_refetch,
+          thumbnails: nil,
+          media_type: nil,
+          cdn_upload_error: nil,
+          is_banned: false,
+          retries_count: 0,
+          refetch_after: nil,
+          updated_at: now
+        ]
+      ],
       timeout: @timeout
     )
   end
@@ -1277,7 +1271,7 @@ defmodule Explorer.Chain.Token.Instance do
   """
   @spec batch_upsert_token_instances([map()]) :: [__MODULE__.t()]
   def batch_upsert_token_instances(params_list) do
-    params_to_insert = __MODULE__.adjust_insert_params(params_list)
+    params_to_insert = adjust_insert_params(params_list)
 
     {_, result} =
       Repo.insert_all(__MODULE__, params_to_insert,
@@ -1303,7 +1297,9 @@ defmodule Explorer.Chain.Token.Instance do
           updated_at: fragment("GREATEST(?, EXCLUDED.updated_at)", token_instance.updated_at),
           retries_count: token_instance.retries_count + 1,
           refetch_after: fragment("EXCLUDED.refetch_after"),
-          is_banned: fragment("EXCLUDED.is_banned")
+          is_banned: fragment("EXCLUDED.is_banned"),
+          metadata_url: fragment("EXCLUDED.metadata_url"),
+          skip_metadata_url: fragment("EXCLUDED.skip_metadata_url")
         ]
       ],
       where: is_nil(token_instance.metadata)

@@ -3,20 +3,20 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
   use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
 
   import BlockScoutWeb.Account.AuthController, only: [current_user: 1]
-  alias BlockScoutWeb.API.V2.BlobView
 
   import BlockScoutWeb.Chain,
     only: [
       next_page_params: 3,
+      next_page_params: 4,
       put_key_value_to_paging_options: 3,
       token_transfers_next_page_params: 3,
       paging_options: 1,
-      split_list_by_page: 1
+      split_list_by_page: 1,
+      fetch_scam_token_toggle: 2
     ]
 
   import BlockScoutWeb.PagingHelper,
     only: [
-      delete_parameters_from_next_page_params: 1,
       paging_options: 2,
       filter_options: 2,
       method_filter_options: 1,
@@ -29,6 +29,8 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
   import Explorer.MicroserviceInterfaces.Metadata,
     only: [maybe_preload_metadata: 1, maybe_preload_metadata_to_transaction: 1]
 
+  import Explorer.Chain.Address.Reputation, only: [reputation_association: 0]
+
   import Ecto.Query,
     only: [
       preload: 2
@@ -37,18 +39,20 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
   require Logger
 
   alias BlockScoutWeb.AccessHelper
+  alias BlockScoutWeb.API.V2.{BlobView, Ethereum.DepositController, Ethereum.DepositView}
   alias BlockScoutWeb.MicroserviceInterfaces.TransactionInterpretation, as: TransactionInterpretationService
   alias BlockScoutWeb.Models.TransactionStateHelper
   alias Explorer.{Chain, PagingOptions, Repo}
   alias Explorer.Chain.Arbitrum.Reader.API.Settlement, as: ArbitrumSettlementReader
+  alias Explorer.Chain.Beacon.Deposit, as: BeaconDeposit
   alias Explorer.Chain.Beacon.Reader, as: BeaconReader
+  alias Explorer.Chain.Cache.Counters.{NewPendingTransactionsCount, Transactions24hCount}
   alias Explorer.Chain.{Hash, InternalTransaction, Transaction}
   alias Explorer.Chain.Optimism.TransactionBatch, as: OptimismTransactionBatch
   alias Explorer.Chain.PolygonZkevm.Reader, as: PolygonZkevmReader
   alias Explorer.Chain.Scroll.Reader, as: ScrollReader
   alias Explorer.Chain.Token.Instance
   alias Explorer.Chain.ZkSync.Reader, as: ZkSyncReader
-  alias Explorer.Counters.{FreshPendingTransactionsCounter, Transactions24hStats}
   alias Indexer.Fetcher.OnDemand.FirstTrace, as: FirstTraceOnDemand
   alias Indexer.Fetcher.OnDemand.NeonSolanaTransactions, as: NeonSolanaTransactions
 
@@ -62,7 +66,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
 
     :celo ->
       @chain_type_transaction_necessity_by_association %{
-        :gas_token => :optional
+        [gas_token: reputation_association()] => :optional
       }
 
     _ ->
@@ -102,13 +106,14 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
 
   @token_transfers_necessity_by_association %{
     [from_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
-    [to_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional
+    [to_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
+    [token: reputation_association()] => :optional
   }
 
   @token_transfers_in_transaction_necessity_by_association %{
     [from_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
     [to_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
-    token: :required
+    [token: reputation_association()] => :optional
   }
 
   @internal_transaction_necessity_by_association [
@@ -174,8 +179,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
            Chain.preload_token_transfers(
              transaction,
              @token_transfers_in_transaction_necessity_by_association,
-             @api_true,
-             false
+             @api_true |> fetch_scam_token_toggle(conn)
            ) do
       conn
       |> put_status(200)
@@ -209,7 +213,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
 
     {transactions, next_page} = split_list_by_page(transactions_plus_one)
 
-    next_page_params = next_page |> next_page_params(transactions, delete_parameters_from_next_page_params(params))
+    next_page_params = next_page |> next_page_params(transactions, params)
 
     conn
     |> put_status(200)
@@ -269,7 +273,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
   """
   @spec external_transactions(Plug.Conn.t(), %{required(String.t()) => String.t()}) :: Plug.Conn.t()
   def external_transactions(conn, %{"transaction_hash_param" => transaction_hash} = _params) do
-    with {:format, {:ok, hash}} <- {:format, Chain.string_to_transaction_hash(transaction_hash)} do
+    with {:format, {:ok, hash}} <- {:format, Chain.string_to_full_hash(transaction_hash)} do
       case NeonSolanaTransactions.maybe_fetch(hash) do
         {:ok, linked_transactions} ->
           conn
@@ -359,7 +363,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
       end
 
     {transactions, next_page} = split_list_by_page(transactions_plus_one)
-    next_page_params = next_page |> next_page_params(transactions, delete_parameters_from_next_page_params(params))
+    next_page_params = next_page |> next_page_params(transactions, params)
 
     conn
     |> put_status(200)
@@ -403,7 +407,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
       |> Chain.hashes_to_transactions(full_options)
 
     {transactions, next_page} = split_list_by_page(transactions_plus_one)
-    next_page_params = next_page |> next_page_params(transactions, delete_parameters_from_next_page_params(params))
+    next_page_params = next_page |> next_page_params(transactions, params)
 
     conn
     |> put_status(200)
@@ -426,7 +430,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
 
       next_page_params =
         next_page
-        |> next_page_params(transactions, delete_parameters_from_next_page_params(params))
+        |> next_page_params(transactions, params)
 
       conn
       |> put_status(200)
@@ -477,6 +481,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
         |> Keyword.merge(paging_options)
         |> Keyword.merge(token_transfers_types_options(params))
         |> Keyword.merge(@api_true)
+        |> fetch_scam_token_toggle(conn)
 
       results =
         transaction_hash
@@ -488,7 +493,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
 
       next_page_params =
         next_page
-        |> token_transfers_next_page_params(token_transfers, delete_parameters_from_next_page_params(params))
+        |> token_transfers_next_page_params(token_transfers, params)
 
       conn
       |> put_status(200)
@@ -518,7 +523,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
 
       next_page_params =
         next_page
-        |> next_page_params(internal_transactions, delete_parameters_from_next_page_params(params))
+        |> next_page_params(internal_transactions, params)
 
       conn
       |> put_status(200)
@@ -538,7 +543,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
       full_options =
         [
           necessity_by_association: %{
-            [address: [:names, :smart_contract, proxy_implementations_association()]] => :optional
+            [address: [:names, :smart_contract, proxy_implementations_smart_contracts_association()]] => :optional
           }
         ]
         |> Keyword.merge(paging_options(params))
@@ -550,7 +555,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
 
       next_page_params =
         next_page
-        |> next_page_params(logs, delete_parameters_from_next_page_params(params))
+        |> next_page_params(logs, params)
 
       conn
       |> put_status(200)
@@ -569,13 +574,19 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
   def state_changes(conn, %{"transaction_hash_param" => transaction_hash_string} = params) do
     with {:ok, transaction, _transaction_hash} <- validate_transaction(transaction_hash_string, params) do
       state_changes_plus_next_page =
-        transaction |> TransactionStateHelper.state_changes(params |> paging_options() |> Keyword.merge(@api_true))
+        transaction
+        |> TransactionStateHelper.state_changes(
+          params
+          |> paging_options()
+          |> Keyword.merge(@api_true)
+          |> Keyword.put(:ip, AccessHelper.conn_to_ip_string(conn))
+        )
 
       {state_changes, next_page} = split_list_by_page(state_changes_plus_next_page)
 
       next_page_params =
         next_page
-        |> next_page_params(state_changes, delete_parameters_from_next_page_params(params))
+        |> next_page_params(state_changes, params)
 
       conn
       |> put_status(200)
@@ -600,7 +611,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
 
       {transactions, next_page} = split_list_by_page(transactions_plus_one)
 
-      next_page_params = next_page |> next_page_params(transactions, delete_parameters_from_next_page_params(params))
+      next_page_params = next_page |> next_page_params(transactions, params)
 
       conn
       |> put_status(200)
@@ -683,10 +694,10 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
   end
 
   def stats(conn, _params) do
-    transactions_count = Transactions24hStats.fetch_count(@api_true)
-    pending_transactions_count = FreshPendingTransactionsCounter.fetch(@api_true)
-    transaction_fees_sum = Transactions24hStats.fetch_fee_sum(@api_true)
-    transaction_fees_avg = Transactions24hStats.fetch_fee_average(@api_true)
+    transactions_count = Transactions24hCount.fetch_count(@api_true)
+    pending_transactions_count = NewPendingTransactionsCount.fetch(@api_true)
+    transaction_fees_sum = Transactions24hCount.fetch_fee_sum(@api_true)
+    transaction_fees_avg = Transactions24hCount.fetch_fee_average(@api_true)
 
     conn
     |> put_status(200)
@@ -702,6 +713,68 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
   end
 
   @doc """
+  Handles `api/v2/transactions/:transaction_hash_param/beacon/deposits` endpoint.
+  Fetches beacon deposits included in a specific transaction with pagination support.
+
+  This endpoint retrieves all beacon deposits that were included in the
+  specified transactions. The results include preloaded associations for both the from_address and
+  withdrawal_address, including scam badges, names, smart contracts, and proxy
+  implementations. The response is paginated and may include ENS and metadata
+  enrichment if those services are enabled.
+
+  ## Parameters
+  - `conn`: The Plug connection.
+  - `params`: A map containing:
+    - `"transaction_hash_param"`: The transaction hash to fetch deposits from.
+    - Optional pagination parameter:
+      - `"index"`: non-negative integer, the starting index for pagination.
+
+  ## Returns
+  - `{:error, :not_found}` - If the transaction is not found.
+  - `{:error, {:invalid, :hash}}` - If the transaction hash format is invalid.
+  - `Plug.Conn.t()` - A 200 response with rendered deposits and pagination
+    information when successful.
+  """
+  @spec beacon_deposits(Plug.Conn.t(), map()) ::
+          {:format, :error}
+          | {:not_found, {:error, :not_found}}
+          | {:restricted_access, true}
+          | Plug.Conn.t()
+  def beacon_deposits(conn, %{"transaction_hash_param" => transaction_hash_string} = params) do
+    with {:ok, _transaction, transaction_hash} <- validate_transaction(transaction_hash_string, params) do
+      full_options =
+        [
+          necessity_by_association: %{
+            [from_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] => :optional,
+            [withdrawal_address: [:scam_badge, :names, :smart_contract, proxy_implementations_association()]] =>
+              :optional
+          },
+          api?: true
+        ]
+        |> Keyword.merge(DepositController.paging_options(params))
+
+      deposit_plus_one = BeaconDeposit.from_transaction_hash(transaction_hash, full_options)
+      {deposits, next_page} = split_list_by_page(deposit_plus_one)
+
+      next_page_params =
+        next_page
+        |> next_page_params(
+          deposits,
+          params,
+          DepositController.paging_function()
+        )
+
+      conn
+      |> put_status(200)
+      |> put_view(DepositView)
+      |> render(:deposits, %{
+        deposits: deposits |> maybe_preload_ens() |> maybe_preload_metadata(),
+        next_page_params: next_page_params
+      })
+    end
+  end
+
+  @doc """
   Checks if this valid transaction hash string, and this transaction doesn't belong to prohibited address
   """
   @spec validate_transaction(String.t(), any(), Keyword.t()) ::
@@ -710,7 +783,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
           | {:restricted_access, true}
           | {:ok, Transaction.t(), Hash.t()}
   def validate_transaction(transaction_hash_string, params, options \\ @api_true) do
-    with {:format, {:ok, transaction_hash}} <- {:format, Chain.string_to_transaction_hash(transaction_hash_string)},
+    with {:format, {:ok, transaction_hash}} <- {:format, Chain.string_to_full_hash(transaction_hash_string)},
          {:not_found, {:ok, transaction}} <-
            {:not_found, Chain.hash_to_transaction(transaction_hash, options)},
          {:ok, false} <- AccessHelper.restricted_access?(to_string(transaction.from_address_hash), params),

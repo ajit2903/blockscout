@@ -4,55 +4,33 @@ defmodule EthereumJSONRPC.HTTP.HTTPoison do
   """
 
   alias EthereumJSONRPC.HTTP
+  alias EthereumJSONRPC.HTTP.Helper
+  alias EthereumJSONRPC.Prometheus.Instrumenter
+  alias Utils.HttpClient.HTTPoisonHelper
 
   @behaviour HTTP
 
   @impl HTTP
   def json_rpc(url, json, headers, options) when is_binary(url) and is_list(options) do
-    gzip_enabled? = Application.get_env(:ethereum_jsonrpc, EthereumJSONRPC.HTTP)[:gzip_enabled?]
+    method = Helper.get_method_from_json_string(json)
 
-    headers =
-      if gzip_enabled? do
-        [{"Accept-Encoding", "gzip"} | headers]
-      else
-        headers
-      end
+    Instrumenter.json_rpc_requests(method)
 
-    case HTTPoison.post(url, json, headers, options) do
+    case HTTPoison.post(url, json, headers, HTTPoisonHelper.request_opts(options)) do
       {:ok, %HTTPoison.Response{body: body, status_code: status_code, headers: headers}} ->
-        {:ok, %{body: try_unzip(gzip_enabled?, body, headers), status_code: status_code}}
+        with {:ok, decoded_body} <- Jason.decode(body),
+             true <- Helper.response_body_has_error?(decoded_body) do
+          Instrumenter.json_rpc_errors(method)
+        end
+
+        {:ok, %{body: Helper.try_unzip(body, headers), status_code: status_code}}
 
       {:error, %HTTPoison.Error{reason: reason}} ->
+        Instrumenter.json_rpc_errors(method)
+
         {:error, reason}
     end
   end
 
   def json_rpc(url, _json, _headers, _options) when is_nil(url), do: {:error, "URL is nil"}
-
-  defp try_unzip(true, body, headers) do
-    gzipped =
-      Enum.any?(
-        headers
-        |> Enum.map(fn {k, v} ->
-          {String.downcase(k), String.downcase(v)}
-        end),
-        fn kv ->
-          case kv do
-            {"content-encoding", "gzip"} -> true
-            {"content-encoding", "x-gzip"} -> true
-            _ -> false
-          end
-        end
-      )
-
-    if gzipped do
-      :zlib.gunzip(body)
-    else
-      body
-    end
-  end
-
-  defp try_unzip(_gzip_enabled?, body, _headers) do
-    body
-  end
 end

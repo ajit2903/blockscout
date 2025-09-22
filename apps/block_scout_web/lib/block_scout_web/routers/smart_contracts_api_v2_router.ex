@@ -7,7 +7,7 @@ defmodule BlockScoutWeb.Routers.SmartContractsApiV2Router do
   use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
 
   alias BlockScoutWeb.API.V2
-  alias BlockScoutWeb.Plug.{CheckApiV2, RateLimit}
+  alias BlockScoutWeb.Plug.CheckApiV2
 
   @max_query_string_length 5_000
 
@@ -25,7 +25,6 @@ defmodule BlockScoutWeb.Routers.SmartContractsApiV2Router do
     plug(CheckApiV2)
     plug(:fetch_session)
     plug(:protect_from_forgery)
-    plug(RateLimit)
   end
 
   pipeline :api_v2_no_forgery_protect do
@@ -41,7 +40,6 @@ defmodule BlockScoutWeb.Routers.SmartContractsApiV2Router do
     plug(BlockScoutWeb.Plug.Logger, application: :api_v2)
     plug(:accepts, ["json"])
     plug(CheckApiV2)
-    plug(RateLimit)
     plug(:fetch_session)
   end
 
@@ -51,12 +49,6 @@ defmodule BlockScoutWeb.Routers.SmartContractsApiV2Router do
     get("/", V2.SmartContractController, :smart_contracts_list)
     get("/counters", V2.SmartContractController, :smart_contracts_counters)
     get("/:address_hash", V2.SmartContractController, :smart_contract)
-    get("/:address_hash/methods-read", V2.SmartContractController, :methods_read)
-    get("/:address_hash/methods-write", V2.SmartContractController, :methods_write)
-    get("/:address_hash/methods-read-proxy", V2.SmartContractController, :methods_read_proxy)
-    get("/:address_hash/methods-write-proxy", V2.SmartContractController, :methods_write_proxy)
-    # todo: this endpoint should be removed in 7.1.0 release
-    get("/:address_hash/solidityscan-report", V2.SmartContractController, :solidityscan_report)
     get("/:address_hash/audit-reports", V2.SmartContractController, :audit_reports_list)
 
     get("/verification/config", V2.VerificationController, :config)
@@ -65,7 +57,6 @@ defmodule BlockScoutWeb.Routers.SmartContractsApiV2Router do
   scope "/", as: :api_v2 do
     pipe_through(:api_v2_no_forgery_protect)
 
-    post("/:address_hash/query-read-method", V2.SmartContractController, :query_read_method)
     post("/:address_hash/audit-reports", V2.SmartContractController, :audit_report_submission)
   end
 

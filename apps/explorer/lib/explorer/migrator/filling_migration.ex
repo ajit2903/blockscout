@@ -62,6 +62,7 @@ defmodule Explorer.Migrator.FillingMigration do
     limiting is handled within `last_unprocessed_identifiers/1`.
   """
   @callback unprocessed_data_query :: Ecto.Query.t() | nil
+  @callback unprocessed_data_query(map()) :: Ecto.Query.t() | nil
 
   @doc """
     This callback retrieves the next batch of data for migration processing. It returns
@@ -153,7 +154,9 @@ defmodule Explorer.Migrator.FillingMigration do
   """
   @callback before_start :: any()
 
-  defmacro __using__(_opts) do
+  @optional_callbacks unprocessed_data_query: 0, unprocessed_data_query: 1
+
+  defmacro __using__(opts) do
     quote do
       @behaviour Explorer.Migrator.FillingMigration
 
@@ -255,7 +258,13 @@ defmodule Explorer.Migrator.FillingMigration do
             |> Enum.map(&run_task/1)
             |> Task.await_many(:infinity)
 
-            MigrationStatus.update_meta(migration_name(), new_state)
+            unquote do
+              unless opts[:skip_meta_update?] do
+                quote do
+                  MigrationStatus.update_meta(migration_name(), new_state)
+                end
+              end
+            end
 
             schedule_batch_migration()
 

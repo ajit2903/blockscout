@@ -5,7 +5,7 @@ defmodule BlockScoutWeb.TransactionTokenTransferControllerTest do
 
   import BlockScoutWeb.Routers.WebRouter.Helpers, only: [transaction_token_transfer_path: 3]
 
-  alias Explorer.ExchangeRates.Token
+  alias Explorer.Market.Token
   alias Explorer.TestHelper
 
   setup :verify_on_exit!
@@ -159,7 +159,8 @@ defmodule BlockScoutWeb.TransactionTokenTransferControllerTest do
     end
 
     test "preloads to_address smart contract verified", %{conn: conn} do
-      TestHelper.get_eip1967_implementation_zero_addresses()
+      EthereumJSONRPC.Mox
+      |> TestHelper.mock_generic_proxy_requests()
 
       transaction = insert(:transaction_to_verified_contract)
 

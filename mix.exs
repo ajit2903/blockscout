@@ -7,7 +7,7 @@ defmodule BlockScout.Mixfile do
     [
       # app: :block_scout,
       # aliases: aliases(config_env()),
-      version: "7.0.0",
+      version: "9.1.1",
       apps_path: "apps",
       deps: deps(),
       dialyzer: dialyzer(),
@@ -56,7 +56,7 @@ defmodule BlockScout.Mixfile do
     [
       plt_add_deps: :app_tree,
       plt_add_apps: ~w(credo ex_unit mix wallaby)a,
-      ignore_warnings: ".dialyzer-ignore",
+      ignore_warnings: ".dialyzer_ignore.exs",
       plt_core_path: "priv/plts",
       plt_file: {:no_warn, "priv/plts/dialyzer.plt"}
     ]
@@ -94,11 +94,12 @@ defmodule BlockScout.Mixfile do
   # and cannot be accessed from applications inside the apps folder
   defp deps do
     [
-      {:prometheus_ex, git: "https://github.com/lanodan/prometheus.ex", branch: "fix/elixir-1.14", override: true},
+      {:prometheus_ex, "~> 5.0.0", override: true},
       {:absinthe_plug, git: "https://github.com/blockscout/absinthe_plug.git", tag: "1.5.8", override: true},
-      {:tesla, "~> 1.13.0"},
+      {:tesla, "~> 1.15.3"},
+      {:mint, "~> 1.7.1"},
       # Documentation
-      {:ex_doc, "~> 0.36.1", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.38.1", only: :dev, runtime: false},
       {:number, "~> 1.0.3"}
     ]
   end
