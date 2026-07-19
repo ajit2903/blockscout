@@ -36,6 +36,7 @@ import './lib/modals'
 import './lib/card_tabs'
 import './lib/ad'
 import './lib/dark_mode'
+import './lib/speed_insights'
 
 import swal from 'sweetalert2'
 // @ts-ignore
