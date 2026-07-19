@@ -40,3 +40,7 @@ import './lib/dark_mode'
 import swal from 'sweetalert2'
 // @ts-ignore
 window.Swal = swal
+
+// Initialize Vercel Speed Insights
+import { injectSpeedInsights } from '@vercel/speed-insights'
+injectSpeedInsights()
