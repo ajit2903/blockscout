@@ -12,6 +12,7 @@ import '../css/app.scss'
 import '@babel/polyfill'
 import 'phoenix_html'
 import 'bootstrap'
+import { inject } from '@vercel/analytics'
 
 // Import local files
 //
@@ -65,3 +66,6 @@ import './lib/try_api'
 import './lib/try_eth_api'
 import './lib/card_tabs'
 import './lib/network_selector'
+
+// Initialize Vercel Web Analytics
+inject()
