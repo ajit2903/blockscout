@@ -117,13 +117,10 @@ defmodule BlockScoutWeb.ViewingTransactionsTest do
       assert_has(session, TransactionListPage.transaction_block_number(transaction, 11))
     end
 
-    test "shows the block number for a transaction already rendered on the list", %{
-      session: session,
-      transaction: transaction
-    } do
+    test "displays the transaction's block number", %{session: session, transaction: transaction} do
       session
       |> TransactionListPage.visit_page()
-      |> assert_has(TransactionListPage.transaction_block_number(transaction, transaction.block_number))
+      |> assert_has(TransactionListPage.transaction_block_number(transaction, 555))
     end
   end
 
