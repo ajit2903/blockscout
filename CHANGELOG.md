@@ -1,5 +1,15 @@
 # Changelog
 
+## Current
+
+### ⚡ Performance
+
+- Add index on `transactions.block_number` to speed up block-scoped transaction queries (created `CONCURRENTLY`, safe for live DBs).
+
+### ⚙️ Miscellaneous Tasks
+
+- Add `.github/FUNDING.yml` with GitHub Sponsors button and Drips link, complementing the existing repo-root `FUNDING.json`.
+
 ## 11.2.3
 
 ### 🚀 Features
