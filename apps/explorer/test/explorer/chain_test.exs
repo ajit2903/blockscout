@@ -1,12 +1,10 @@
-# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.ChainTest do
   use Explorer.DataCase
-  use EthereumJSONRPC.Case
 
   require Ecto.Query
 
+  import Ecto.Query
   import Explorer.Factory
-  import Mox
 
   alias Explorer.{Chain, Factory, PagingOptions, Repo}
 
@@ -20,194 +18,466 @@ defmodule Explorer.ChainTest do
     Token,
     TokenTransfer,
     Transaction,
+    SmartContract,
     Wei
   }
 
-  alias Explorer.{Chain, Etherscan}
-  alias Explorer.Chain.Cache.ChainId
-
-  alias Explorer.Chain.Cache.Counters.{
-    BlocksCount,
-    TransactionsCount,
-    PendingBlockOperationCount,
-    PendingTransactionOperationCount
-  }
-
-  alias Explorer.Chain.MultichainSearchDb.{BalancesExportQueue, MainExportQueue}
-
   alias Explorer.Chain.Supply.ProofOfAuthority
-  alias Explorer.Chain.Cache.Counters.AddressesCount
 
-  alias Explorer.TestHelper
-
-  alias Explorer.Utility.AddressIdToAddressHash
-
-  @first_topic_hex_string "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-  @second_topic_hex_string "0x000000000000000000000000e8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca"
-  @third_topic_hex_string "0x000000000000000000000000515c09c5bba1ed566b02a5b0599ec5d5d0aee73d"
+  alias Explorer.Counters.TokenHoldersCounter
 
   doctest Explorer.Chain
 
-  setup :set_mox_global
-
-  setup :verify_on_exit!
-
-  describe "address_estimated_count/0" do
-    test "returns the number of all addresses" do
-      insert(:address, fetched_coin_balance: 0)
-      insert(:address, fetched_coin_balance: 1)
-      insert(:address, fetched_coin_balance: 2)
-
-      start_supervised!(AddressesCount)
-      AddressesCount.consolidate()
-
-      addresses_with_balance = AddressesCount.fetch()
-
-      assert is_integer(addresses_with_balance)
-      assert addresses_with_balance == 3
-    end
-
-    test "returns 0 on empty table" do
-      start_supervised!(AddressesCount)
-      assert 0 == AddressesCount.fetch()
+  describe "address_estimated_count/1" do
+    test "returns integer" do
+      assert is_integer(Chain.address_estimated_count())
     end
   end
 
-  describe "address_to_logs/2" do
-    test "fetches logs" do
-      %Address{hash: address_hash} = address = insert(:address)
+  describe "address_to_pending_transactions/2" do
+    test "without pending transactions" do
+      address = insert(:address)
 
-      transaction1 =
+      assert Repo.aggregate(Transaction, :count, :hash) == 0
+
+      assert [] == Chain.address_to_pending_transactions(address)
+    end
+
+    test "excludes collated transaction" do
+      address = insert(:address)
+      :transaction
+      |> insert(from_address: address)
+      |> with_block()
+
+      assert [] == Chain.address_to_pending_transactions(address)
+    end
+
+    test "with from transactions" do
+      address = insert(:address)
+
+      transaction = insert(:transaction, from_address: address)
+
+      assert [transaction] ==
+               Chain.address_to_pending_transactions(address, direction: :from)
+               |> Repo.preload([:to_address, :from_address])
+    end
+
+    test "with to transactions" do
+      address = insert(:address)
+
+      transaction = insert(:transaction, to_address: address)
+
+      assert [transaction] ==
+               Chain.address_to_pending_transactions(address, direction: :to)
+               |> Repo.preload([:to_address, :from_address])
+    end
+
+    test "with to and from transactions and direction: :from" do
+      address = insert(:address)
+
+      transaction = insert(:transaction, from_address: address)
+      insert(:transaction, to_address: address)
+
+      # only contains "from" transaction
+      assert [transaction] ==
+               Chain.address_to_pending_transactions(address, direction: :from)
+               |> Repo.preload([:to_address, :from_address])
+    end
+
+    test "with to and from transactions and direction: :to" do
+      address = insert(:address)
+
+      transaction = insert(:transaction, to_address: address)
+      insert(:transaction, from_address: address)
+
+      assert [transaction] ==
+               Chain.address_to_pending_transactions(address, direction: :to)
+               |> Repo.preload([:to_address, :from_address])
+    end
+
+    test "with to and from transactions and no :direction option" do
+      address = insert(:address)
+
+      transaction1 = insert(:transaction, from_address: address)
+      transaction2 = insert(:transaction, to_address: address)
+
+      assert [transaction1, transaction2] ==
+               Chain.address_to_pending_transactions(address)
+               |> Repo.preload([:to_address, :from_address])
+    end
+  end
+
+  describe "address_to_transactions/2" do
+    test "without transactions" do
+      address = insert(:address)
+
+      assert Repo.aggregate(Transaction, :count, :hash) == 0
+
+      assert [] == Chain.address_to_transactions(address)
+    end
+
+    test "excludes reorg transaction" do
+      address = insert(:address)
+      block = insert(:block, consensus: false)
+      transaction =
+        :transaction
+        |> insert(from_address: address)
+        |> with_block(block)
+      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
+
+      assert [] == Chain.address_to_transactions(address)
+    end
+
+    test "excludes reorg transaction when direction is :from" do
+      address = insert(:address)
+      block = insert(:block, consensus: false)
+      transaction =
+        :transaction
+        |> insert(from_address: address)
+        |> with_block(block)
+      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
+
+      assert [] == Chain.address_to_transactions(address, direction: :from)
+    end
+
+    test "excludes reorg transaction when direction is :to" do
+      address = insert(:address)
+      block = insert(:block, consensus: false)
+      transaction =
         :transaction
         |> insert(to_address: address)
-        |> with_block()
+        |> with_block(block)
+      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
 
-      insert(:log,
-        block: transaction1.block,
-        block_number: transaction1.block_number,
-        transaction: transaction1,
-        index: 1,
-        address: address
-      )
+      assert [] == Chain.address_to_transactions(address, direction: :to)
+    end
 
-      transaction2 =
+    test "does not exclude a transaction on a non-consensus block without a matching transaction_fork" do
+      address = insert(:address)
+      block = insert(:block, consensus: false)
+      transaction =
+        :transaction
+        |> insert(from_address: address)
+        |> with_block(block)
+        |> Repo.preload(:token_transfers)
+
+      assert [transaction] ==
+               Chain.address_to_transactions(address)
+               |> Repo.preload([:block, :to_address, :from_address])
+    end
+
+    test "excludes a transaction with multiple transaction_fork records only once" do
+      address = insert(:address)
+      block = insert(:block, consensus: false)
+      other_uncle = insert(:block, consensus: false)
+      transaction =
+        :transaction
+        |> insert(from_address: address)
+        |> with_block(block)
+      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
+      insert(:transaction_fork, hash: transaction.hash, uncle_hash: other_uncle.hash)
+
+      assert [] == Chain.address_to_transactions(address)
+    end
+
+    test "with from transactions" do
+      address = insert(:address)
+
+      transaction =
         :transaction
         |> insert(from_address: address)
         |> with_block()
+        |> Repo.preload(:token_transfers)
 
-      insert(:log,
-        block: transaction2.block,
-        block_number: transaction2.block_number,
-        transaction: transaction2,
-        index: 2,
-        address: address
-      )
-
-      assert Enum.count(Chain.address_to_logs(address_hash, false)) == 2
+      assert [transaction] ==
+               Chain.address_to_transactions(address, direction: :from)
+               |> Repo.preload([:block, :to_address, :from_address])
     end
 
-    test "paginates logs" do
-      %Address{hash: address_hash} = address = insert(:address)
+    test "with to transactions" do
+      address = insert(:address)
 
       transaction =
         :transaction
         |> insert(to_address: address)
         |> with_block()
+        |> Repo.preload(:token_transfers)
 
-      1..51
-      |> Enum.map(fn index ->
-        insert(:log,
-          block: transaction.block,
-          transaction: transaction,
-          index: index,
-          address: address,
-          block_number: transaction.block_number
-        )
-      end)
-
-      paging_options1 = %PagingOptions{page_size: 1}
-
-      [_log] = Chain.address_to_logs(address_hash, false, paging_options: paging_options1)
-
-      paging_options2 = %PagingOptions{page_size: 60, key: {transaction.block_number, 51}}
-
-      assert Enum.count(Chain.address_to_logs(address_hash, false, paging_options: paging_options2)) == 50
+      assert [transaction] ==
+               Chain.address_to_transactions(address, direction: :to)
+               |> Repo.preload([:block, :to_address, :from_address])
     end
 
-    test "searches logs by topic when the first topic matches" do
-      %Address{hash: address_hash} = address = insert(:address)
+    test "with to and from transactions and direction: :from" do
+      address = insert(:address)
+
+      transaction =
+        :transaction
+        |> insert(from_address: address)
+        |> with_block()
+        |> Repo.preload(:token_transfers)
+
+      # only contains "from" transaction
+      assert [transaction] ==
+               Chain.address_to_transactions(address, direction: :from)
+               |> Repo.preload([:block, :to_address, :from_address])
+    end
+
+    test "with to and from transactions and direction: :to" do
+      address = insert(:address)
+
+      transaction =
+        :transaction
+        |> insert(to_address: address)
+        |> with_block()
+        |> Repo.preload(:token_transfers)
+
+      assert [transaction] ==
+               Chain.address_to_transactions(address, direction: :to)
+               |> Repo.preload([:block, :to_address, :from_address])
+    end
+
+    test "with to and from transactions and no :direction option" do
+      address = insert(:address)
+      block = insert(:block)
 
       transaction1 =
         :transaction
         |> insert(to_address: address)
-        |> with_block()
-
-      insert(:log,
-        block: transaction1.block,
-        transaction: transaction1,
-        index: 1,
-        address: address,
-        block_number: transaction1.block_number
-      )
-
-      first_topic_hex_string = "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65"
-      {:ok, first_topic} = Explorer.Chain.Hash.Full.cast(first_topic_hex_string)
+        |> with_block(block)
+        |> Repo.preload(:token_transfers)
 
       transaction2 =
         :transaction
         |> insert(from_address: address)
-        |> with_block()
+        |> with_block(block)
+        |> Repo.preload(:token_transfers)
 
-      insert(:log,
-        block: transaction2.block,
-        transaction: transaction2,
-        index: 2,
-        address: address,
-        first_topic: first_topic,
-        block_number: transaction2.block_number
-      )
-
-      [found_log] = Chain.address_to_logs(address_hash, false, topic: first_topic_hex_string)
-
-      assert found_log.transaction.hash == transaction2.hash
+      assert [transaction2, transaction1] ==
+               Chain.address_to_transactions(address)
+               |> Repo.preload([:block, :to_address, :from_address])
     end
 
-    test "searches logs by topic when the fourth topic matches" do
-      %Address{hash: address_hash} = address = insert(:address)
-
-      transaction1 =
+    test "does not include non-contract-creation parent transactions" do
+      transaction =
+        %Transaction{} =
         :transaction
-        |> insert(to_address: address)
+        |> insert()
         |> with_block()
 
-      fourth_topic_hex_string = "0x927abf391899d10d331079a63caffa905efa7075a44a7bbd52b190db4c4308fb"
-      {:ok, fourth_topic} = Explorer.Chain.Hash.Full.cast(fourth_topic_hex_string)
+      %InternalTransaction{created_contract_address: address} =
+        insert(:internal_transaction_create, transaction: transaction, index: 0)
 
-      insert(:log,
-        block: transaction1.block,
-        block_number: transaction1.block_number,
-        transaction: transaction1,
-        index: 1,
-        address: address,
-        fourth_topic: fourth_topic
+      assert [] == Chain.address_to_transactions(address)
+    end
+
+    test "excludes reorg transaction that have token transfers for the given address" do
+      address = insert(:address)
+      block = insert(:block, consensus: false)
+      transaction =
+        :transaction
+        |> insert(from_address: address)
+        |> with_block(block)
+      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
+      insert(:token_transfer, to_address: address, transaction: transaction)
+
+      assert [] == Chain.address_to_transactions(address)
+    end
+
+    test "excludes reorg transaction that have token transfers for the given from_address" do
+      address = insert(:address)
+      block = insert(:block, consensus: false)
+      transaction =
+        :transaction
+        |> insert(from_address: address)
+        |> with_block(block)
+      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
+      insert(:token_transfer, from_address: address, transaction: transaction)
+
+      assert [] == Chain.address_to_transactions(address, direction: :from)
+    end
+
+    test "returns transactions that have token transfers for the given to_address" do
+      address = insert(:address)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      insert(:token_transfer, to_address: address, transaction: transaction)
+
+      transaction =
+        Transaction
+        |> Repo.get!(transaction.hash)
+        |> Repo.preload([:block, :to_address, :from_address, token_transfers: :token])
+
+      assert [transaction.hash] ==
+               Chain.address_to_transactions(address)
+               |> Enum.map(& &1.hash)
+    end
+
+    test "returns just the token transfers related to the given address" do
+      address = insert(:address)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      token_transfer = insert(:token_transfer, to_address: address, transaction: transaction)
+      insert(:token_transfer, to_address: build(:address), transaction: transaction)
+
+      transaction = Chain.address_to_transactions(address) |> List.first()
+      assert transaction.token_transfers |> Enum.map(& &1.id) == [token_transfer.id]
+    end
+
+    test "returns just the token transfers related to the given contract address" do
+      contract_address = insert(:address, contract_code: Factory.data("contract_code"))
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      token_transfer = insert(:token_transfer, to_address: contract_address, transaction: transaction)
+      insert(:token_transfer, to_address: build(:address), transaction: transaction)
+
+      transaction = Chain.address_to_transactions(contract_address) |> List.first()
+      assert Enum.map(transaction.token_transfers, & &1.id) == [token_transfer.id]
+    end
+
+    test "returns all token transfers when the given address is the token contract address" do
+      contract_address = insert(:address, contract_code: Factory.data("contract_code"))
+
+      transaction =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block()
+
+      insert(
+        :token_transfer,
+        to_address: build(:address),
+        token_contract_address: contract_address,
+        transaction: transaction
       )
 
-      transaction2 =
+      insert(
+        :token_transfer,
+        to_address: build(:address),
+        token_contract_address: contract_address,
+        transaction: transaction
+      )
+
+      transaction = Chain.address_to_transactions(contract_address) |> List.first()
+      assert Enum.count(transaction.token_transfers) == 2
+    end
+
+    test "with transactions can be paginated" do
+      address = insert(:address)
+
+      second_page_hashes =
+        50
+        |> insert_list(:transaction, from_address: address)
+        |> with_block()
+        |> Enum.map(& &1.hash)
+
+      %Transaction{block_number: block_number, index: index} =
         :transaction
         |> insert(from_address: address)
         |> with_block()
 
-      insert(:log,
-        block: transaction2.block,
-        block_number: transaction2.block.number,
-        transaction: transaction2,
-        index: 2,
-        address: address
-      )
+      assert second_page_hashes ==
+               address
+               |> Chain.address_to_transactions(
+                 paging_options: %PagingOptions{key: {block_number, index}, page_size: 50}
+               )
+               |> Enum.map(& &1.hash)
+               |> Enum.reverse()
+    end
 
-      [found_log] = Chain.address_to_logs(address_hash, false, topic: fourth_topic_hex_string)
+    test "returns results in reverse chronological order by block number and transaction index" do
+      address = insert(:address)
 
-      assert found_log.transaction.hash == transaction1.hash
+      %Transaction{hash: first_pending} = insert(:transaction, to_address: address)
+      %Transaction{hash: second_pending} = insert(:transaction, to_address: address)
+
+      a_block = insert(:block, number: 6000)
+
+      %Transaction{hash: first} =
+        :transaction
+        |> insert(to_address: address)
+        |> with_block(a_block)
+
+      %Transaction{hash: second} =
+        :transaction
+        |> insert(to_address: address)
+        |> with_block(a_block)
+
+      %Transaction{hash: third} =
+        :transaction
+        |> insert(to_address: address)
+        |> with_block(a_block)
+
+      %Transaction{hash: fourth} =
+        :transaction
+        |> insert(to_address: address)
+        |> with_block(a_block)
+
+      b_block = insert(:block, number: 2000)
+
+      %Transaction{hash: fifth} =
+        :transaction
+        |> insert(to_address: address)
+        |> with_block(b_block)
+
+      %Transaction{hash: sixth} =
+        :transaction
+        |> insert(to_address: address)
+        |> with_block(b_block)
+
+      result =
+        address
+        |> Chain.address_to_transactions()
+        |> Enum.map(& &1.hash)
+
+      assert [first_pending, second_pending, fourth, third, second, first, sixth, fifth] == result
+    end
+  end
+
+  describe "total_transactions_sent_by_address/1" do
+    test "increments +1 in the last nonce result" do
+      address = insert(:address)
+
+      :transaction
+      |> insert(nonce: 100, from_address: address)
+      |> with_block(insert(:block, number: 1000))
+
+      assert Chain.total_transactions_sent_by_address(address) == 101
+    end
+
+    test "returns 0 when the address did not send transactions" do
+      address = insert(:address)
+
+      :transaction
+      |> insert(nonce: 100, to_address: address)
+      |> with_block(insert(:block, number: 1000))
+
+      assert Chain.total_transactions_sent_by_address(address) == 0
+    end
+  end
+
+  describe "average_block_time/0" do
+    test "without blocks duration is 0" do
+      assert Chain.average_block_time() == Timex.Duration.parse!("PT0S")
+    end
+
+    test "with blocks is average duration between blocks" do
+      first_block = insert(:block)
+      second_block = insert(:block, timestamp: Timex.shift(first_block.timestamp, seconds: 3))
+      insert(:block, timestamp: Timex.shift(second_block.timestamp, seconds: 9))
+
+      assert Chain.average_block_time() == Timex.Duration.parse!("PT6S")
     end
   end
 
@@ -236,7 +506,7 @@ defmodule Explorer.ChainTest do
 
       assert Repo.aggregate(Transaction, :count, :hash) == 0
 
-      assert [] = Chain.block_to_transactions(block.hash)
+      assert [] = Chain.block_to_transactions(block)
     end
 
     test "with transactions" do
@@ -245,7 +515,7 @@ defmodule Explorer.ChainTest do
         |> insert()
         |> with_block()
 
-      assert [%Transaction{hash: ^transaction_hash}] = Chain.block_to_transactions(block.hash)
+      assert [%Transaction{hash: ^transaction_hash}] = Chain.block_to_transactions(block)
     end
 
     test "with transactions can be paginated by {index}" do
@@ -263,9 +533,10 @@ defmodule Explorer.ChainTest do
         |> with_block(block)
 
       assert second_page_hashes ==
-               block.hash
-               |> Chain.block_to_transactions(paging_options: %PagingOptions{key: {block.number, index}, page_size: 50})
+               block
+               |> Chain.block_to_transactions(paging_options: %PagingOptions{key: {index}, page_size: 50})
                |> Enum.map(& &1.hash)
+               |> Enum.reverse()
     end
 
     test "returns transactions with token_transfers preloaded" do
@@ -288,115 +559,9 @@ defmodule Explorer.ChainTest do
         token: token
       )
 
-      fetched_transaction = List.first(Explorer.Chain.block_to_transactions(block.hash))
+      fetched_transaction = List.first(Explorer.Chain.block_to_transactions(block))
       assert fetched_transaction.hash == transaction.hash
       assert length(fetched_transaction.token_transfers) == 2
-    end
-  end
-
-  describe "block_to_gas_used_by_1559_transactions/1" do
-    test "sum of gas_usd from all transactions including legacy" do
-      block = insert(:block, base_fee_per_gas: 4)
-
-      insert(:transaction,
-        gas_used: 4,
-        cumulative_gas_used: 3,
-        block_number: block.number,
-        block_hash: block.hash,
-        index: 1,
-        max_fee_per_gas: 0,
-        max_priority_fee_per_gas: 3
-      )
-
-      insert(:transaction,
-        gas_used: 6,
-        cumulative_gas_used: 3,
-        block_number: block.number,
-        block_hash: block.hash,
-        index: 2
-      )
-
-      assert Decimal.new(10) == Chain.block_to_gas_used_by_1559_transactions(block.hash)
-    end
-  end
-
-  describe "block_to_priority_fee_of_1559_transactions/1" do
-    test "with transactions: transaction.max_fee_per_gas = 0" do
-      block = insert(:block, base_fee_per_gas: 4)
-
-      insert(:transaction,
-        gas_used: 4,
-        cumulative_gas_used: 3,
-        block_number: block.number,
-        block_hash: block.hash,
-        index: 1,
-        max_fee_per_gas: 0,
-        max_priority_fee_per_gas: 3
-      )
-
-      assert Decimal.new(0) == Chain.block_to_priority_fee_of_1559_transactions(block.hash)
-    end
-
-    test "with transactions: transaction.max_fee_per_gas - block.base_fee_per_gas >= transaction.max_priority_fee_per_gas" do
-      block = insert(:block, base_fee_per_gas: 1)
-
-      insert(:transaction,
-        gas_used: 3,
-        cumulative_gas_used: 3,
-        block_number: block.number,
-        block_hash: block.hash,
-        index: 1,
-        max_fee_per_gas: 5,
-        max_priority_fee_per_gas: 1
-      )
-
-      assert Decimal.new(3) == Chain.block_to_priority_fee_of_1559_transactions(block.hash)
-    end
-
-    test "with transactions: transaction.max_fee_per_gas - block.base_fee_per_gas < transaction.max_priority_fee_per_gas" do
-      block = insert(:block, base_fee_per_gas: 4)
-
-      insert(:transaction,
-        gas_used: 4,
-        cumulative_gas_used: 3,
-        block_number: block.number,
-        block_hash: block.hash,
-        index: 1,
-        max_fee_per_gas: 5,
-        max_priority_fee_per_gas: 3
-      )
-
-      assert Decimal.new(4) == Chain.block_to_priority_fee_of_1559_transactions(block.hash)
-    end
-
-    test "with legacy transactions" do
-      block = insert(:block, base_fee_per_gas: 1)
-
-      insert(:transaction,
-        gas_price: 5,
-        gas_used: 6,
-        cumulative_gas_used: 6,
-        block_number: block.number,
-        block_hash: block.hash,
-        index: 1
-      )
-
-      assert Decimal.new(24) == Chain.block_to_priority_fee_of_1559_transactions(block.hash)
-    end
-
-    test "0 in blockchain with no EIP-1559 implemented" do
-      block = insert(:block, base_fee_per_gas: nil)
-
-      insert(:transaction,
-        gas_price: 1,
-        gas_used: 4,
-        cumulative_gas_used: 4,
-        block_number: block.number,
-        block_hash: block.hash,
-        index: 1
-      )
-
-      assert 0 == Chain.block_to_priority_fee_of_1559_transactions(block.hash)
     end
   end
 
@@ -404,7 +569,7 @@ defmodule Explorer.ChainTest do
     test "without transactions" do
       block = insert(:block)
 
-      assert Chain.block_to_transaction_count(block.hash) == 0
+      assert Chain.block_to_transaction_count(block) == 0
     end
 
     test "with transactions" do
@@ -413,56 +578,47 @@ defmodule Explorer.ChainTest do
         |> insert()
         |> with_block()
 
-      assert Chain.block_to_transaction_count(block.hash) == 1
+      assert Chain.block_to_transaction_count(block) == 1
     end
   end
 
   describe "confirmations/1" do
-    test "with block.number == block_height " do
+    test "with block.number == max_block_number " do
       block = insert(:block)
-      block_height = Chain.block_height()
+      {:ok, max_block_number} = Chain.max_block_number()
 
-      assert block.number == block_height
-      assert {:ok, 1} = Chain.confirmations(block, block_height: block_height)
+      assert block.number == max_block_number
+      assert Chain.confirmations(block, max_block_number: max_block_number) == 0
     end
 
-    test "with block.number < block_height" do
+    test "with block.number < max_block_number" do
       block = insert(:block)
-      block_height = block.number + 2
+      max_block_number = block.number + 2
 
-      assert block.number < block_height
-      assert {:ok, confirmations} = Chain.confirmations(block, block_height: block_height)
-      assert confirmations == block_height - block.number + 1
+      assert block.number < max_block_number
+
+      assert Chain.confirmations(block, max_block_number: max_block_number) == max_block_number - block.number
     end
   end
 
   describe "fee/2" do
     test "without receipt with :wei unit" do
-      assert Transaction.fee(
-               %Transaction{gas: Decimal.new(3), gas_price: %Wei{value: Decimal.new(2)}, gas_used: nil},
-               :wei
-             ) ==
+      assert Chain.fee(%Transaction{gas: Decimal.new(3), gas_price: %Wei{value: Decimal.new(2)}, gas_used: nil}, :wei) ==
                {:maximum, Decimal.new(6)}
     end
 
     test "without receipt with :gwei unit" do
-      assert Transaction.fee(
-               %Transaction{gas: Decimal.new(3), gas_price: %Wei{value: Decimal.new(2)}, gas_used: nil},
-               :gwei
-             ) ==
+      assert Chain.fee(%Transaction{gas: Decimal.new(3), gas_price: %Wei{value: Decimal.new(2)}, gas_used: nil}, :gwei) ==
                {:maximum, Decimal.new("6e-9")}
     end
 
     test "without receipt with :ether unit" do
-      assert Transaction.fee(
-               %Transaction{gas: Decimal.new(3), gas_price: %Wei{value: Decimal.new(2)}, gas_used: nil},
-               :ether
-             ) ==
+      assert Chain.fee(%Transaction{gas: Decimal.new(3), gas_price: %Wei{value: Decimal.new(2)}, gas_used: nil}, :ether) ==
                {:maximum, Decimal.new("6e-18")}
     end
 
     test "with receipt with :wei unit" do
-      assert Transaction.fee(
+      assert Chain.fee(
                %Transaction{
                  gas: Decimal.new(3),
                  gas_price: %Wei{value: Decimal.new(2)},
@@ -473,7 +629,7 @@ defmodule Explorer.ChainTest do
     end
 
     test "with receipt with :gwei unit" do
-      assert Transaction.fee(
+      assert Chain.fee(
                %Transaction{
                  gas: Decimal.new(3),
                  gas_price: %Wei{value: Decimal.new(2)},
@@ -484,7 +640,7 @@ defmodule Explorer.ChainTest do
     end
 
     test "with receipt with :ether unit" do
-      assert Transaction.fee(
+      assert Chain.fee(
                %Transaction{
                  gas: Decimal.new(3),
                  gas_price: %Wei{value: Decimal.new(2)},
@@ -510,45 +666,24 @@ defmodule Explorer.ChainTest do
         |> insert()
         |> with_block()
 
-      %TokenTransfer{
-        transaction_hash: token_transfer_transaction_hash,
-        log_index: token_transfer_log_index,
-        token_contract_address_hash: token_contract_address_hash
-      } = insert(:token_transfer, to_address: address, transaction: transaction)
+      %TokenTransfer{id: token_transfer_id, token_contract_address_hash: token_contract_address_hash} =
+        insert(:token_transfer, to_address: address, transaction: transaction)
 
       assert token_contract_address_hash
              |> Chain.fetch_token_transfers_from_token_hash()
-             |> Enum.map(&{&1.transaction_hash, &1.log_index}) == [
-               {token_transfer_transaction_hash, token_transfer_log_index}
-             ]
+             |> Enum.map(& &1.id) == [token_transfer_id]
     end
   end
 
-  describe "finished_indexing_internal_transactions?/0" do
-    setup do
-      Supervisor.terminate_child(Explorer.Supervisor, PendingBlockOperationCount.child_id())
-      Supervisor.restart_child(Explorer.Supervisor, PendingBlockOperationCount.child_id())
-      Supervisor.terminate_child(Explorer.Supervisor, PendingTransactionOperationCount.child_id())
-      Supervisor.restart_child(Explorer.Supervisor, PendingTransactionOperationCount.child_id())
-
-      on_exit(fn ->
-        Supervisor.terminate_child(Explorer.Supervisor, PendingBlockOperationCount.child_id())
-        Supervisor.terminate_child(Explorer.Supervisor, PendingTransactionOperationCount.child_id())
-      end)
-    end
-
+  describe "finished_indexing?/0" do
     test "finished indexing" do
       block = insert(:block, number: 1)
 
       :transaction
       |> insert()
-      |> with_block(block)
+      |> with_block(block, internal_transactions_indexed_at: DateTime.utc_now())
 
-      assert Chain.finished_indexing_internal_transactions?()
-    end
-
-    test "finished indexing (no transactions)" do
-      assert Chain.finished_indexing_internal_transactions?()
+      assert Chain.finished_indexing?()
     end
 
     test "not finished indexing" do
@@ -558,20 +693,7 @@ defmodule Explorer.ChainTest do
       |> insert()
       |> with_block(block)
 
-      insert(:pending_block_operation, block: block, block_number: block.number)
-
-      configuration = Application.get_env(:indexer, Indexer.Fetcher.InternalTransaction.Supervisor)
-      Application.put_env(:indexer, Indexer.Fetcher.InternalTransaction.Supervisor, disabled?: false)
-
-      geth_config = Application.get_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth)
-      Application.put_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth, Keyword.put(geth_config, :block_traceable?, true))
-
-      on_exit(fn ->
-        Application.put_env(:indexer, Indexer.Fetcher.InternalTransaction.Supervisor, configuration)
-        Application.put_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth, geth_config)
-      end)
-
-      refute Chain.finished_indexing_internal_transactions?()
+      refute Chain.finished_indexing?()
     end
   end
 
@@ -664,57 +786,13 @@ defmodule Explorer.ChainTest do
         |> insert()
         |> with_block()
 
-      insert(:internal_transaction,
-        transaction: transaction,
-        index: 0,
-        block_number: transaction.block_number,
-        transaction_index: transaction.index
-      )
+      insert(:internal_transaction, transaction: transaction, index: 0)
 
       Enum.each(1..3, fn index ->
-        insert(:internal_transaction_create,
-          transaction: transaction,
-          index: index,
-          block_number: transaction.block_number,
-          transaction_index: transaction.index
-        )
+        insert(:internal_transaction_create, transaction: transaction, index: index)
       end)
 
       assert {:ok, %Transaction{hash: ^hash_with_block}} = Chain.hash_to_transaction(hash_with_block)
-    end
-  end
-
-  describe "hash_to_address/1" do
-    test "returns not found if the address doesn't exist" do
-      hash_str = "0xcbbcd5ac86f9a50e13313633b262e16f695a90c2"
-      {:ok, hash} = Chain.string_to_address_hash(hash_str)
-
-      assert {:error, :not_found} = Chain.hash_to_address(hash)
-    end
-
-    test "returns the correct address if it exists" do
-      address = insert(:address)
-
-      assert {:ok, address_from_db} = Chain.hash_to_address(address.hash)
-      assert address_from_db.hash == address.hash
-      assert address_from_db.inserted_at == address.inserted_at
-    end
-  end
-
-  describe "find_or_insert_address_from_hash/1" do
-    test "returns an address if it already exists" do
-      address = insert(:address)
-
-      assert {:ok, address_from_db} = Chain.find_or_insert_address_from_hash(address.hash)
-      assert address_from_db.hash == address.hash
-      assert address_from_db.inserted_at == address.inserted_at
-    end
-
-    test "returns an address if it doesn't exist" do
-      hash_str = "0xcbbcd5ac86f9a50e13313633b262e16f695a90c2"
-      {:ok, hash} = Chain.string_to_address_hash(hash_str)
-
-      assert {:ok, %Chain.Address{hash: ^hash}} = Chain.find_or_insert_address_from_hash(hash)
     end
   end
 
@@ -754,7 +832,7 @@ defmodule Explorer.ChainTest do
         |> insert_list(:transaction)
         |> with_block()
 
-      %TokenTransfer{transaction_hash: transaction_hash1, log_index: log_index1} =
+      %TokenTransfer{id: id1} =
         insert(
           :token_transfer,
           to_address: address,
@@ -763,7 +841,7 @@ defmodule Explorer.ChainTest do
           token: token
         )
 
-      %TokenTransfer{transaction_hash: transaction_hash2, log_index: log_index2} =
+      %TokenTransfer{id: id2} =
         insert(
           :token_transfer,
           to_address: address,
@@ -775,276 +853,35 @@ defmodule Explorer.ChainTest do
       fetched_transactions = Explorer.Chain.hashes_to_transactions([transaction1.hash, transaction2.hash])
 
       assert Enum.all?(fetched_transactions, fn transaction ->
-               %TokenTransfer{transaction_hash: transaction_hash, log_index: log_index} =
-                 hd(transaction.token_transfers)
-
-               {transaction_hash, log_index} in [{transaction_hash1, log_index1}, {transaction_hash2, log_index2}]
+               hd(transaction.token_transfers).id in [id1, id2]
              end)
     end
   end
 
-  describe "indexed_ratio_blocks/0" do
-    setup do
-      Supervisor.terminate_child(Explorer.Supervisor, Explorer.Chain.Cache.Counters.BlocksCount.child_id())
-      Supervisor.restart_child(Explorer.Supervisor, Explorer.Chain.Cache.Counters.BlocksCount.child_id())
-
-      initial_env = Application.get_env(:indexer, :block_ranges)
-
-      on_exit(fn ->
-        Application.put_env(:indexer, :block_ranges, initial_env)
-      end)
-    end
-
+  describe "indexed_ratio/0" do
     test "returns indexed ratio" do
-      for index <- 5..9 do
-        insert(:block, number: index, consensus: true)
+      for index <- 6..10 do
+        insert(:block, number: index)
       end
 
-      BlocksCount.get()
-
-      assert Decimal.compare(Chain.indexed_ratio_blocks(), Decimal.from_float(0.5)) == :eq
-    end
-
-    test "returns 1 if no blocks" do
-      assert Decimal.new(1) == Chain.indexed_ratio_blocks()
-    end
-
-    test "returns 1.0 if fully indexed blocks" do
-      for index <- 0..9 do
-        insert(:block, number: index, consensus: true)
-        Process.sleep(200)
-      end
-
-      BlocksCount.get()
-
-      assert Decimal.compare(Chain.indexed_ratio_blocks(), 1) == :eq
-    end
-
-    test "returns 1.0 if fully indexed blocks starting from given FIRST_BLOCK" do
-      for index <- 5..9 do
-        insert(:block, number: index, consensus: true)
-        Process.sleep(200)
-      end
-
-      BlocksCount.get()
-      Application.put_env(:indexer, :block_ranges, "5..latest")
-
-      assert Decimal.compare(Chain.indexed_ratio_blocks(), 1) == :eq
-    end
-  end
-
-  describe "indexed_ratio_internal_transactions/0" do
-    setup do
-      Supervisor.terminate_child(Explorer.Supervisor, PendingBlockOperationCount.child_id())
-      Supervisor.restart_child(Explorer.Supervisor, PendingBlockOperationCount.child_id())
-      Supervisor.terminate_child(Explorer.Supervisor, PendingTransactionOperationCount.child_id())
-      Supervisor.restart_child(Explorer.Supervisor, PendingTransactionOperationCount.child_id())
-      configuration = Application.get_env(:indexer, Indexer.Fetcher.InternalTransaction.Supervisor)
-      Application.put_env(:indexer, Indexer.Fetcher.InternalTransaction.Supervisor, disabled?: false)
-
-      on_exit(fn ->
-        Application.put_env(:indexer, :trace_first_block, 0)
-        Application.put_env(:indexer, Indexer.Fetcher.InternalTransaction.Supervisor, configuration)
-        Supervisor.terminate_child(Explorer.Supervisor, PendingBlockOperationCount.child_id())
-        Supervisor.terminate_child(Explorer.Supervisor, PendingTransactionOperationCount.child_id())
-      end)
-    end
-
-    test "returns indexed ratio (pending_block_operation)" do
-      for index <- 0..9 do
-        block = insert(:block, number: index)
-
-        if index === 0 || index === 5 || index === 7 do
-          insert(:pending_block_operation, block: block, block_number: block.number)
-        end
-      end
-
-      config = Application.get_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth)
-      Application.put_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth, Keyword.put(config, :block_traceable?, true))
-
-      on_exit(fn -> Application.put_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth, config) end)
-
-      Chain.indexed_ratio_internal_transactions()
-
-      assert Decimal.compare(Chain.indexed_ratio_internal_transactions(), Decimal.from_float(0.7)) == :eq
-    end
-
-    test "returns indexed ratio (pending_transaction_operation)" do
-      for index <- 0..9 do
-        block = insert(:block, number: index)
-
-        transaction_hashes =
-          2
-          |> insert_list(:transaction)
-          |> with_block(block)
-          |> Enum.map(& &1.hash)
-
-        if index === 0 || index === 5 || index === 7 do
-          insert(:pending_transaction_operation, transaction_hash: List.first(transaction_hashes))
-        end
-      end
-
-      geth_config = Application.get_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth)
-      json_rpc_config = Application.get_env(:explorer, :json_rpc_named_arguments)
-      Application.put_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth, Keyword.put(geth_config, :block_traceable?, false))
-
-      Application.put_env(
-        :explorer,
-        :json_rpc_named_arguments,
-        Keyword.put(json_rpc_config, :variant, EthereumJSONRPC.Geth)
-      )
-
-      on_exit(fn ->
-        Application.put_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth, geth_config)
-        Application.put_env(:explorer, :json_rpc_named_arguments, json_rpc_config)
-      end)
-
-      Chain.indexed_ratio_internal_transactions()
-
-      assert Decimal.compare(Chain.indexed_ratio_internal_transactions(), Decimal.from_float(0.7)) == :eq
+      assert 0.5 == Chain.indexed_ratio()
     end
 
     test "returns 0 if no blocks" do
-      assert Decimal.new(0) == Chain.indexed_ratio_internal_transactions()
+      assert 0 == Chain.indexed_ratio()
     end
 
-    test "returns 1.0 if no pending block operations" do
-      for index <- 0..9 do
+    test "returns 1.0 if fully indexed blocks" do
+      for index <- 1..10 do
         insert(:block, number: index)
       end
 
-      assert Decimal.compare(Chain.indexed_ratio_internal_transactions(), 1) == :eq
-    end
-
-    test "returns 1.0 if fully indexed blocks with internal transactions starting from given TRACE_FIRST_BLOCK" do
-      Application.put_env(:indexer, :trace_first_block, 5)
-
-      for index <- 5..9 do
-        insert(:block, number: index)
-      end
-
-      assert Decimal.compare(Chain.indexed_ratio_internal_transactions(), 1) == :eq
-    end
-  end
-
-  describe "fetch_sum_coin_total_supply/0" do
-    test "fetches coin total supply" do
-      for index <- 0..4 do
-        insert(:address, fetched_coin_balance: index)
-      end
-
-      assert "10" = Decimal.to_string(Etherscan.fetch_sum_coin_total_supply())
-    end
-
-    test "fetches coin total supply when there are no blocks" do
-      assert 0 = Etherscan.fetch_sum_coin_total_supply()
-    end
-  end
-
-  describe "address_hash_to_token_transfers/2" do
-    test "returns just the token transfers related to the given contract address" do
-      contract_address =
-        insert(
-          :address,
-          contract_code: Factory.data("contract_code")
-        )
-
-      transaction =
-        :transaction
-        |> insert(to_address: contract_address)
-        |> with_block()
-
-      token_transfer =
-        insert(
-          :token_transfer,
-          to_address: contract_address,
-          transaction: transaction
-        )
-
-      insert(
-        :token_transfer,
-        to_address: build(:address),
-        transaction: transaction
-      )
-
-      transaction =
-        contract_address.hash
-        |> Chain.address_hash_to_token_transfers()
-        |> List.first()
-
-      token_transfers_contract_address =
-        Enum.map(
-          transaction.token_transfers,
-          &{&1.transaction_hash, &1.log_index}
-        )
-
-      assert token_transfers_contract_address == [
-               {token_transfer.transaction_hash, token_transfer.log_index}
-             ]
-    end
-
-    test "returns just the token transfers related to the given address" do
-      %Address{hash: address_hash} = address = insert(:address)
-
-      transaction =
-        :transaction
-        |> insert(to_address: address)
-        |> with_block()
-
-      token_transfer =
-        insert(
-          :token_transfer,
-          to_address: address,
-          transaction: transaction
-        )
-
-      insert(
-        :token_transfer,
-        to_address: build(:address),
-        transaction: transaction
-      )
-
-      transaction =
-        address_hash
-        |> Chain.address_hash_to_token_transfers()
-        |> List.first()
-
-      token_transfers_related =
-        Enum.map(
-          transaction.token_transfers,
-          &{&1.transaction_hash, &1.log_index}
-        )
-
-      assert token_transfers_related == [
-               {token_transfer.transaction_hash, token_transfer.log_index}
-             ]
-    end
-
-    test "fetches token transfers by address hash" do
-      address = insert(:address)
-
-      token_transfer =
-        insert(
-          :token_transfer,
-          from_address: address,
-          amount: 1
-        )
-
-      [transaction_hash] =
-        address.hash
-        |> Chain.address_hash_to_token_transfers()
-        |> Enum.map(& &1.hash)
-
-      assert transaction_hash == token_transfer.transaction_hash
+      assert 1.0 == Chain.indexed_ratio()
     end
   end
 
   # Full tests in `test/explorer/import_test.exs`
   describe "import/1" do
-    {:ok, first_topic} = Explorer.Chain.Hash.Full.cast(@first_topic_hex_string)
-    {:ok, second_topic} = Explorer.Chain.Hash.Full.cast(@second_topic_hex_string)
-    {:ok, third_topic} = Explorer.Chain.Hash.Full.cast(@third_topic_hex_string)
-
     @import_data %{
       blocks: %{
         params: [
@@ -1068,8 +905,7 @@ defmodule Explorer.ChainTest do
         params: [
           %{
             nephew_hash: "0xf6b4b8c88df3ebd252ec476328334dc026cf66606a84fb769b3d3cbccc8471bd",
-            uncle_hash: "0xf6b4b8c88df3ebd252ec476328334dc026cf66606a84fb769b3d3cbccc8471be",
-            index: 0
+            uncle_hash: "0xf6b4b8c88df3ebd252ec476328334dc026cf66606a84fb769b3d3cbccc8471be"
           }
         ]
       },
@@ -1077,41 +913,37 @@ defmodule Explorer.ChainTest do
       internal_transactions: %{
         params: [
           %{
-            block_number: 37,
-            transaction_hash: "0x53bd884872de3e488692881baeec262e7b95234d3965248c39fe992fffd433e5",
-            transaction_index: 1,
-            # transaction with index 0 is ignored in Nethermind JSON RPC Variant and not ignored in case of Geth
-            index: 1,
-            trace_address: [],
-            type: "call",
             call_type: "call",
             from_address_hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca",
-            to_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
             gas: 4_677_320,
             gas_used: 27770,
-            input: "0x10855269000000000000000000000000862d67cb0773ee3f8ce7ea89b328ffea861ab3ef",
+            index: 0,
             output: "0x",
+            to_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
+            trace_address: [],
+            transaction_hash: "0x53bd884872de3e488692881baeec262e7b95234d3965248c39fe992fffd433e5",
+            type: "call",
             value: 0
           }
-        ],
-        with: :blockless_changeset
+        ]
       },
       logs: %{
         params: [
           %{
-            block_hash: "0xf6b4b8c88df3ebd252ec476328334dc026cf66606a84fb769b3d3cbccc8471bd",
             address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
             data: "0x0000000000000000000000000000000000000000000000000de0b6b3a7640000",
-            first_topic: first_topic,
-            second_topic: second_topic,
-            third_topic: third_topic,
+            first_topic: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            second_topic: "0x000000000000000000000000e8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca",
+            third_topic: "0x000000000000000000000000515c09c5bba1ed566b02a5b0599ec5d5d0aee73d",
             fourth_topic: nil,
             index: 0,
-            transaction_hash: "0x53bd884872de3e488692881baeec262e7b95234d3965248c39fe992fffd433e5"
+            transaction_hash: "0x53bd884872de3e488692881baeec262e7b95234d3965248c39fe992fffd433e5",
+            type: "mined"
           }
         ]
       },
       transactions: %{
+        on_conflict: :replace_all,
         params: [
           %{
             block_hash: "0xf6b4b8c88df3ebd252ec476328334dc026cf66606a84fb769b3d3cbccc8471bd",
@@ -1122,7 +954,7 @@ defmodule Explorer.ChainTest do
             gas_price: 100_000_000_000,
             gas_used: 50450,
             hash: "0x53bd884872de3e488692881baeec262e7b95234d3965248c39fe992fffd433e5",
-            index: 1,
+            index: 0,
             input: "0x10855269000000000000000000000000862d67cb0773ee3f8ce7ea89b328ffea861ab3ef",
             nonce: 4,
             public_key:
@@ -1156,37 +988,24 @@ defmodule Explorer.ChainTest do
       token_transfers: %{
         params: [
           %{
-            block_hash: "0xf6b4b8c88df3ebd252ec476328334dc026cf66606a84fb769b3d3cbccc8471bd",
             amount: Decimal.new(1_000_000_000_000_000_000),
             block_number: 37,
             log_index: 0,
             from_address_hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca",
             to_address_hash: "0x515c09c5bba1ed566b02a5b0599ec5d5d0aee73d",
             token_contract_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
-            token_type: "ERC-20",
             transaction_hash: "0x53bd884872de3e488692881baeec262e7b95234d3965248c39fe992fffd433e5"
           }
         ]
       }
     }
 
-    test "with valid data", %{json_rpc_named_arguments: _json_rpc_named_arguments} do
-      {:ok, first_topic} = Explorer.Chain.Hash.Full.cast(@first_topic_hex_string)
-      {:ok, second_topic} = Explorer.Chain.Hash.Full.cast(@second_topic_hex_string)
-      {:ok, third_topic} = Explorer.Chain.Hash.Full.cast(@third_topic_hex_string)
+    test "with valid data" do
       difficulty = Decimal.new(340_282_366_920_938_463_463_374_607_431_768_211_454)
       total_difficulty = Decimal.new(12_590_447_576_074_723_148_144_860_474_975_121_280_509)
       token_transfer_amount = Decimal.new(1_000_000_000_000_000_000)
       gas_limit = Decimal.new(6_946_336)
       gas_used = Decimal.new(50450)
-
-      gas_int = Decimal.new("4677320")
-      gas_used_int = Decimal.new("27770")
-
-      %{address_id: from_address_id} =
-        AddressIdToAddressHash.find_or_create("0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca")
-
-      %{address_id: to_address_id} = AddressIdToAddressHash.find_or_create("0x8bf38d4764929064f2d4d3a56520a76ab3df415b")
 
       assert {:ok,
               %{
@@ -1270,27 +1089,14 @@ defmodule Explorer.ChainTest do
                   }
                 ],
                 internal_transactions: [
-                  %InternalTransaction{
-                    call_type_enum: :call,
-                    created_contract_code: nil,
-                    error: nil,
-                    gas: ^gas_int,
-                    gas_used: ^gas_used_int,
-                    index: 1,
-                    init: nil,
-                    input: %Data{
+                  %{
+                    index: 0,
+                    transaction_hash: %Hash{
+                      byte_count: 32,
                       bytes:
-                        <<16, 133, 82, 105, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 134, 45, 103, 203, 7, 115, 238, 63, 140,
-                          231, 234, 137, 179, 40, 255, 234, 134, 26, 179, 239>>
-                    },
-                    output: %Data{bytes: ""},
-                    trace_address: nil,
-                    type: :call,
-                    block_number: 37,
-                    transaction_index: 1,
-                    created_contract_address_hash: nil,
-                    from_address_id: ^from_address_id,
-                    to_address_id: ^to_address_id
+                        <<83, 189, 136, 72, 114, 222, 62, 72, 134, 146, 136, 27, 174, 236, 38, 46, 123, 149, 35, 77, 57,
+                          101, 36, 140, 57, 254, 153, 47, 255, 212, 51, 229>>
+                    }
                   }
                 ],
                 logs: [
@@ -1307,9 +1113,9 @@ defmodule Explorer.ChainTest do
                           167, 100, 0, 0>>
                     },
                     index: 0,
-                    first_topic: ^first_topic,
-                    second_topic: ^second_topic,
-                    third_topic: ^third_topic,
+                    first_topic: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                    second_topic: "0x000000000000000000000000e8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca",
+                    third_topic: "0x000000000000000000000000515c09c5bba1ed566b02a5b0599ec5d5d0aee73d",
                     fourth_topic: nil,
                     transaction_hash: %Hash{
                       byte_count: 32,
@@ -1317,20 +1123,17 @@ defmodule Explorer.ChainTest do
                         <<83, 189, 136, 72, 114, 222, 62, 72, 134, 146, 136, 27, 174, 236, 38, 46, 123, 149, 35, 77, 57,
                           101, 36, 140, 57, 254, 153, 47, 255, 212, 51, 229>>
                     },
+                    type: "mined",
                     inserted_at: %{},
                     updated_at: %{}
                   }
                 ],
                 transactions: [
-                  %Transaction{
-                    block_number: 37,
-                    index: 1,
-                    hash: %Hash{
-                      byte_count: 32,
-                      bytes:
-                        <<83, 189, 136, 72, 114, 222, 62, 72, 134, 146, 136, 27, 174, 236, 38, 46, 123, 149, 35, 77, 57,
-                          101, 36, 140, 57, 254, 153, 47, 255, 212, 51, 229>>
-                    }
+                  %Hash{
+                    byte_count: 32,
+                    bytes:
+                      <<83, 189, 136, 72, 114, 222, 62, 72, 134, 146, 136, 27, 174, 236, 38, 46, 123, 149, 35, 77, 57,
+                        101, 36, 140, 57, 254, 153, 47, 255, 212, 51, 229>>
                   }
                 ],
                 tokens: [
@@ -1378,210 +1181,6 @@ defmodule Explorer.ChainTest do
                   }
                 ]
               }} = Chain.import(@import_data)
-
-      assert Repo.aggregate(MainExportQueue, :count, :hash) == 0
-    end
-
-    test "populates main multichain export queue, if the multichain service is enabled" do
-      Supervisor.terminate_child(Explorer.Supervisor, ChainId.child_id())
-      Supervisor.restart_child(Explorer.Supervisor, ChainId.child_id())
-      multichain_configuration = Application.get_env(:explorer, Explorer.MicroserviceInterfaces.MultichainSearch)
-
-      on_exit(fn ->
-        Application.put_env(:explorer, Explorer.MicroserviceInterfaces.MultichainSearch, multichain_configuration)
-      end)
-
-      bypass = Bypass.open()
-
-      Application.put_env(:explorer, Explorer.MicroserviceInterfaces.MultichainSearch,
-        service_url: "http://localhost:#{bypass.port}",
-        addresses_chunk_size: 7_000
-      )
-
-      TestHelper.get_chain_id_mock()
-      Chain.import(@import_data)
-
-      # 3 addresses + 1 block + 1 transaction
-      assert Repo.aggregate(MainExportQueue, :count, :hash) == 5
-    end
-
-    test "doesn't populate main multichain export queue from on_demand fetcher, if the address is inactive on the chain" do
-      Supervisor.terminate_child(Explorer.Supervisor, ChainId.child_id())
-      Supervisor.restart_child(Explorer.Supervisor, ChainId.child_id())
-      multichain_configuration = Application.get_env(:explorer, Explorer.MicroserviceInterfaces.MultichainSearch)
-
-      on_exit(fn ->
-        Application.put_env(:explorer, Explorer.MicroserviceInterfaces.MultichainSearch, multichain_configuration)
-      end)
-
-      bypass = Bypass.open()
-
-      Application.put_env(:explorer, Explorer.MicroserviceInterfaces.MultichainSearch,
-        service_url: "http://localhost:#{bypass.port}",
-        addresses_chunk_size: 7_000
-      )
-
-      import_data_1 = %{
-        addresses: %{
-          params: [
-            %{
-              hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca",
-              transactions_count: 0,
-              token_transfers_count: 0,
-              fetched_coin_balance: nil
-            }
-          ]
-        },
-        broadcast: :on_demand
-      }
-
-      TestHelper.get_chain_id_mock()
-      Chain.import(import_data_1)
-
-      # non-active address isn't imported from on-demand fetcher
-      assert Repo.aggregate(MainExportQueue, :count, :hash) == 0
-
-      import_data_2 = %{
-        addresses: %{
-          params: [
-            %{
-              hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987acb",
-              transactions_count: 0,
-              token_transfers_count: 0,
-              fetched_coin_balance: nil
-            }
-          ]
-        }
-      }
-
-      Chain.import(import_data_2)
-
-      # "non-active" address is imported from regular fetcher
-      assert Repo.aggregate(MainExportQueue, :count, :hash) == 1
-
-      import_data_3 = %{
-        addresses: %{
-          params: [
-            %{
-              hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987acd",
-              transactions_count: 0,
-              token_transfers_count: 0,
-              fetched_coin_balance: %Wei{value: Decimal.new(10)}
-            }
-          ]
-        },
-        broadcast: :on_demand
-      }
-
-      Chain.import(import_data_3)
-
-      # address with a non-zero balance is imported from on-demand fetcher
-      assert Repo.aggregate(MainExportQueue, :count, :hash) == 2
-
-      import_data_4 = %{
-        addresses: %{
-          params: [
-            %{
-              hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987ace",
-              transactions_count: 1,
-              token_transfers_count: 0,
-              fetched_coin_balance: %Wei{value: Decimal.new(0)}
-            }
-          ]
-        },
-        broadcast: :on_demand
-      }
-
-      Chain.import(import_data_4)
-
-      # address with non-zero transactions counter is imported from on-demand fetcher
-      assert Repo.aggregate(MainExportQueue, :count, :hash) == 3
-
-      import_data_5 = %{
-        addresses: %{
-          params: [
-            %{
-              hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987acc",
-              transactions_count: 1,
-              token_transfers_count: nil,
-              fetched_coin_balance: nil
-            }
-          ]
-        },
-        broadcast: :on_demand
-      }
-
-      Chain.import(import_data_5)
-
-      # address with non-zero token transfers counter is imported from on-demand fetcher
-      assert Repo.aggregate(MainExportQueue, :count, :hash) == 4
-    end
-
-    test "populates balances multichain export queue and updates it, if the multichain service is enabled" do
-      Supervisor.terminate_child(Explorer.Supervisor, ChainId.child_id())
-      Supervisor.restart_child(Explorer.Supervisor, ChainId.child_id())
-      multichain_configuration = Application.get_env(:explorer, Explorer.MicroserviceInterfaces.MultichainSearch)
-
-      on_exit(fn ->
-        Application.put_env(:explorer, Explorer.MicroserviceInterfaces.MultichainSearch, multichain_configuration)
-      end)
-
-      bypass = Bypass.open()
-
-      Application.put_env(:explorer, Explorer.MicroserviceInterfaces.MultichainSearch,
-        service_url: "http://localhost:#{bypass.port}",
-        addresses_chunk_size: 7_000
-      )
-
-      import_data_1 = %{
-        address_current_token_balances: %{
-          params: [
-            %{
-              address_hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca",
-              token_contract_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
-              block_number: "37",
-              value: 200,
-              value_fetched_at: DateTime.utc_now(),
-              token_type: "ERC-20",
-              token_id: nil
-            }
-          ]
-        }
-      }
-
-      TestHelper.get_chain_id_mock()
-      Chain.import(import_data_1)
-
-      # 1 token balance
-      assert Repo.aggregate(BalancesExportQueue, :count, :id) == 1
-
-      [token_balance_export_item] = Repo.all(BalancesExportQueue)
-      assert token_balance_export_item.value == %Explorer.Chain.Wei{value: Decimal.new(200)}
-
-      import_data_2 = %{
-        address_current_token_balances: %{
-          params: [
-            %{
-              address_hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca",
-              token_contract_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
-              block_number: "40",
-              value: 500,
-              value_fetched_at: DateTime.utc_now(),
-              token_type: "ERC-20",
-              token_id: nil
-            }
-          ]
-        }
-      }
-
-      Chain.import(import_data_2)
-
-      # 1 token balance
-      assert Repo.aggregate(BalancesExportQueue, :count, :id) == 1
-
-      [token_balance_export_item] = Repo.all(BalancesExportQueue)
-      # token balance value has been updated
-      assert token_balance_export_item.value == %Explorer.Chain.Wei{value: Decimal.new(500)}
     end
   end
 
@@ -1612,6 +1211,96 @@ defmodule Explorer.ChainTest do
     end
   end
 
+  describe "list_top_addresses/0" do
+    test "without addresses with balance > 0" do
+      insert(:address, fetched_coin_balance: 0)
+      assert [] = Chain.list_top_addresses()
+    end
+
+    test "with top addresses in order" do
+      address_hashes =
+        4..1
+        |> Enum.map(&insert(:address, fetched_coin_balance: &1))
+        |> Enum.map(& &1.hash)
+
+      assert address_hashes == Enum.map(Chain.list_top_addresses(), & &1.hash)
+    end
+
+    test "with top addresses in order with matching value" do
+      test_hashes =
+        4..0
+        |> Enum.map(&Explorer.Chain.Hash.cast(Explorer.Chain.Hash.Address, &1))
+        |> Enum.map(&elem(&1, 1))
+
+      tail =
+        4..1
+        |> Enum.map(&insert(:address, fetched_coin_balance: &1, hash: Enum.fetch!(test_hashes, &1 - 1)))
+        |> Enum.map(& &1.hash)
+
+      first_result_hash =
+        :address
+        |> insert(fetched_coin_balance: 4, hash: Enum.fetch!(test_hashes, 4))
+        |> Map.fetch!(:hash)
+
+      assert [first_result_hash | tail] == Enum.map(Chain.list_top_addresses(), & &1.hash)
+    end
+  end
+
+  describe "get_blocks_validated_by_address/2" do
+    test "returns nothing when there are no blocks" do
+      address = insert(:address)
+
+      assert [] = Chain.get_blocks_validated_by_address(address)
+    end
+
+    test "returns the blocks validated by a specified address" do
+      address = insert(:address)
+      another_address = insert(:address)
+
+      block = insert(:block, miner: address, miner_hash: address.hash)
+      insert(:block, miner: another_address, miner_hash: another_address.hash)
+
+      results =
+        address
+        |> Chain.get_blocks_validated_by_address()
+        |> Enum.map(& &1.hash)
+
+      assert results == [block.hash]
+    end
+
+    test "with blocks can be paginated" do
+      address = insert(:address)
+
+      first_page_block = insert(:block, miner: address, miner_hash: address.hash, number: 0)
+      second_page_block = insert(:block, miner: address, miner_hash: address.hash, number: 2)
+
+      assert [first_page_block.number] ==
+               [paging_options: %PagingOptions{key: {1}, page_size: 1}]
+               |> Chain.get_blocks_validated_by_address(address)
+               |> Enum.map(& &1.number)
+               |> Enum.reverse()
+
+      assert [second_page_block.number] ==
+               [paging_options: %PagingOptions{key: {3}, page_size: 1}]
+               |> Chain.get_blocks_validated_by_address(address)
+               |> Enum.map(& &1.number)
+               |> Enum.reverse()
+    end
+  end
+
+  describe "group_block_validations_by_address/0" do
+    test "returns block validations grouped by the address that validated them (`address_hash`)" do
+      address = insert(:address)
+
+      insert(:block, miner: address, miner_hash: address.hash)
+
+      results = Chain.group_block_validations_by_address()
+
+      assert length(results) == 1
+      assert results == [{address.hash, 1}]
+    end
+  end
+
   describe "number_to_block/1" do
     test "without block" do
       assert {:error, :not_found} = Chain.number_to_block(-1)
@@ -1624,23 +1313,493 @@ defmodule Explorer.ChainTest do
     end
   end
 
-  describe "transaction_estimated_count/1" do
-    setup do
-      Supervisor.terminate_child(Explorer.Supervisor, Explorer.Chain.Cache.Counters.TransactionsCount.child_id())
-      Supervisor.restart_child(Explorer.Supervisor, Explorer.Chain.Cache.Counters.TransactionsCount.child_id())
-      :ok
+  describe "address_to_internal_transactions/1" do
+    test "with single transaction containing two internal transactions" do
+      address = insert(:address)
+      transaction = insert(:transaction)
+
+      %InternalTransaction{id: first_id} =
+        insert(:internal_transaction, index: 0, transaction: transaction, to_address: address)
+
+      %InternalTransaction{id: second_id} =
+        insert(:internal_transaction, index: 1, transaction: transaction, to_address: address)
+
+      result = address |> Chain.address_to_internal_transactions() |> Enum.map(& &1.id)
+      assert Enum.member?(result, first_id)
+      assert Enum.member?(result, second_id)
     end
 
-    test "returns integer" do
-      assert is_integer(TransactionsCount.get())
+    test "loads associations in necessity_by_association" do
+      address = insert(:address)
+      transaction = insert(:transaction, to_address: address)
+      insert(:internal_transaction, transaction: transaction, to_address: address, index: 0)
+      insert(:internal_transaction, transaction: transaction, to_address: address, index: 1)
+
+      assert [
+               %InternalTransaction{
+                 from_address: %Ecto.Association.NotLoaded{},
+                 to_address: %Ecto.Association.NotLoaded{},
+                 transaction: %Transaction{}
+               }
+               | _
+             ] = Chain.address_to_internal_transactions(address)
+
+      assert [
+               %InternalTransaction{
+                 from_address: %Address{},
+                 to_address: %Address{},
+                 transaction: %Transaction{}
+               }
+               | _
+             ] =
+               Chain.address_to_internal_transactions(
+                 address,
+                 necessity_by_association: %{
+                   [from_address: :names] => :optional,
+                   [to_address: :names] => :optional,
+                   :transaction => :optional
+                 }
+               )
+    end
+
+    test "returns results in reverse chronological order by block number, transaction index, internal transaction index" do
+      address = insert(:address)
+
+      pending_transaction = insert(:transaction)
+
+      %InternalTransaction{id: first_pending} =
+        insert(
+          :internal_transaction,
+          transaction: pending_transaction,
+          to_address: address,
+          index: 0
+        )
+
+      %InternalTransaction{id: second_pending} =
+        insert(
+          :internal_transaction,
+          transaction: pending_transaction,
+          to_address: address,
+          index: 1
+        )
+
+      a_block = insert(:block, number: 2000)
+
+      first_a_transaction =
+        :transaction
+        |> insert()
+        |> with_block(a_block)
+
+      %InternalTransaction{id: first} =
+        insert(
+          :internal_transaction,
+          transaction: first_a_transaction,
+          to_address: address,
+          index: 0
+        )
+
+      %InternalTransaction{id: second} =
+        insert(
+          :internal_transaction,
+          transaction: first_a_transaction,
+          to_address: address,
+          index: 1
+        )
+
+      second_a_transaction =
+        :transaction
+        |> insert()
+        |> with_block(a_block)
+
+      %InternalTransaction{id: third} =
+        insert(
+          :internal_transaction,
+          transaction: second_a_transaction,
+          to_address: address,
+          index: 0
+        )
+
+      %InternalTransaction{id: fourth} =
+        insert(
+          :internal_transaction,
+          transaction: second_a_transaction,
+          to_address: address,
+          index: 1
+        )
+
+      b_block = insert(:block, number: 6000)
+
+      first_b_transaction =
+        :transaction
+        |> insert()
+        |> with_block(b_block)
+
+      %InternalTransaction{id: fifth} =
+        insert(
+          :internal_transaction,
+          transaction: first_b_transaction,
+          to_address: address,
+          index: 0
+        )
+
+      %InternalTransaction{id: sixth} =
+        insert(
+          :internal_transaction,
+          transaction: first_b_transaction,
+          to_address: address,
+          index: 1
+        )
+
+      result =
+        address
+        |> Chain.address_to_internal_transactions()
+        |> Enum.map(& &1.id)
+
+      assert [second_pending, first_pending, sixth, fifth, fourth, third, second, first] == result
+    end
+
+    test "pages by {block_number, transaction_index, index}" do
+      address = insert(:address)
+
+      pending_transaction = insert(:transaction)
+
+      insert(
+        :internal_transaction,
+        transaction: pending_transaction,
+        to_address: address,
+        index: 0
+      )
+
+      insert(
+        :internal_transaction,
+        transaction: pending_transaction,
+        to_address: address,
+        index: 1
+      )
+
+      a_block = insert(:block, number: 2000)
+
+      first_a_transaction =
+        :transaction
+        |> insert()
+        |> with_block(a_block)
+
+      %InternalTransaction{id: first} =
+        insert(
+          :internal_transaction,
+          transaction: first_a_transaction,
+          to_address: address,
+          index: 0
+        )
+
+      %InternalTransaction{id: second} =
+        insert(
+          :internal_transaction,
+          transaction: first_a_transaction,
+          to_address: address,
+          index: 1
+        )
+
+      second_a_transaction =
+        :transaction
+        |> insert()
+        |> with_block(a_block)
+
+      %InternalTransaction{id: third} =
+        insert(
+          :internal_transaction,
+          transaction: second_a_transaction,
+          to_address: address,
+          index: 0
+        )
+
+      %InternalTransaction{id: fourth} =
+        insert(
+          :internal_transaction,
+          transaction: second_a_transaction,
+          to_address: address,
+          index: 1
+        )
+
+      b_block = insert(:block, number: 6000)
+
+      first_b_transaction =
+        :transaction
+        |> insert()
+        |> with_block(b_block)
+
+      %InternalTransaction{id: fifth} =
+        insert(
+          :internal_transaction,
+          transaction: first_b_transaction,
+          to_address: address,
+          index: 0
+        )
+
+      %InternalTransaction{id: sixth} =
+        insert(
+          :internal_transaction,
+          transaction: first_b_transaction,
+          to_address: address,
+          index: 1
+        )
+
+      # When paged, internal transactions need an associated block number, so `second_pending` and `first_pending` are
+      # excluded.
+      assert [sixth, fifth, fourth, third, second, first] ==
+               address
+               |> Chain.address_to_internal_transactions(
+                 paging_options: %PagingOptions{key: {6001, 3, 2}, page_size: 8}
+               )
+               |> Enum.map(& &1.id)
+
+      # block number ==, transaction index ==, internal transaction index <
+      assert [fifth, fourth, third, second, first] ==
+               address
+               |> Chain.address_to_internal_transactions(
+                 paging_options: %PagingOptions{key: {6000, 0, 1}, page_size: 8}
+               )
+               |> Enum.map(& &1.id)
+
+      # block number ==, transaction index <
+      assert [fourth, third, second, first] ==
+               address
+               |> Chain.address_to_internal_transactions(
+                 paging_options: %PagingOptions{key: {6000, -1, -1}, page_size: 8}
+               )
+               |> Enum.map(& &1.id)
+
+      # block number <
+      assert [] ==
+               address
+               |> Chain.address_to_internal_transactions(
+                 paging_options: %PagingOptions{key: {2000, -1, -1}, page_size: 8}
+               )
+               |> Enum.map(& &1.id)
+    end
+
+    test "excludes internal transactions of type `call` when they are alone in the parent transaction" do
+      address = insert(:address)
+
+      transaction =
+        :transaction
+        |> insert(to_address: address)
+        |> with_block()
+
+      insert(:internal_transaction, index: 0, to_address: address, transaction: transaction)
+
+      assert Enum.empty?(Chain.address_to_internal_transactions(address))
+    end
+
+    test "includes internal transactions of type `create` even when they are alone in the parent transaction" do
+      address = insert(:address)
+
+      transaction =
+        :transaction
+        |> insert(to_address: address)
+        |> with_block()
+
+      expected =
+        insert(
+          :internal_transaction_create,
+          index: 0,
+          from_address: address,
+          transaction: transaction
+        )
+
+      actual = Enum.at(Chain.address_to_internal_transactions(address), 0)
+
+      assert actual.id == expected.id
     end
   end
 
-  describe "transaction_to_logs/3" do
+  describe "recent_pending_transactions/0" do
+    test "without transactions" do
+      assert [] = Chain.recent_pending_transactions()
+    end
+
+    test "with transactions" do
+      %Transaction{hash: hash} = insert(:transaction)
+
+      assert [%Transaction{hash: ^hash}] = Chain.recent_pending_transactions()
+    end
+
+    test "with transactions can be paginated" do
+      second_page_hashes =
+        50
+        |> insert_list(:transaction)
+        |> Enum.map(& &1.hash)
+
+      %Transaction{inserted_at: inserted_at, hash: hash} = insert(:transaction)
+
+      assert second_page_hashes ==
+               [paging_options: %PagingOptions{key: {inserted_at, hash}, page_size: 50}]
+               |> Chain.recent_pending_transactions()
+               |> Enum.map(& &1.hash)
+               |> Enum.reverse()
+    end
+  end
+
+  describe "transaction_estimated_count/1" do
+    test "returns integer" do
+      assert is_integer(Chain.transaction_estimated_count())
+    end
+  end
+
+  describe "transaction_to_internal_transactions/1" do
+    test "with transaction without internal transactions" do
+      transaction = insert(:transaction)
+
+      assert [] = Chain.transaction_to_internal_transactions(transaction)
+    end
+
+    test "with transaction with internal transactions returns all internal transactions for a given transaction hash" do
+      block = insert(:block)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      first = insert(:internal_transaction, transaction: transaction, index: 0)
+      second = insert(:internal_transaction, transaction: transaction, index: 1)
+
+      results = [internal_transaction | _] = Chain.transaction_to_internal_transactions(transaction)
+
+      assert 2 == length(results)
+      assert Enum.all?(results, &(&1.id in [first.id, second.id]))
+      assert internal_transaction.transaction.block.number == block.number
+    end
+
+    test "with transaction with internal transactions loads associations with in necessity_by_association" do
+      transaction = insert(:transaction)
+      insert(:internal_transaction_create, transaction: transaction, index: 0)
+
+      assert [
+               %InternalTransaction{
+                 from_address: %Ecto.Association.NotLoaded{},
+                 to_address: %Ecto.Association.NotLoaded{},
+                 transaction: %Transaction{}
+               }
+             ] = Chain.transaction_to_internal_transactions(transaction)
+
+      assert [
+               %InternalTransaction{
+                 from_address: %Address{},
+                 to_address: nil,
+                 transaction: %Transaction{}
+               }
+             ] =
+               Chain.transaction_to_internal_transactions(
+                 transaction,
+                 necessity_by_association: %{
+                   from_address: :optional,
+                   to_address: :optional,
+                   transaction: :optional
+                 }
+               )
+    end
+
+    test "excludes internal transaction of type call with no siblings in the transaction" do
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      insert(:internal_transaction, transaction: transaction, index: 0)
+
+      result = Chain.transaction_to_internal_transactions(transaction)
+
+      assert Enum.empty?(result)
+    end
+
+    test "includes internal transactions of type `create` even when they are alone in the parent transaction" do
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      expected = insert(:internal_transaction_create, index: 0, transaction: transaction)
+
+      actual = Enum.at(Chain.transaction_to_internal_transactions(transaction), 0)
+
+      assert actual.id == expected.id
+    end
+
+    test "includes internal transactions of type `reward` even when they are alone in the parent transaction" do
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      expected = insert(:internal_transaction, index: 0, transaction: transaction, type: :reward)
+
+      actual = Enum.at(Chain.transaction_to_internal_transactions(transaction), 0)
+
+      assert actual.id == expected.id
+    end
+
+    test "includes internal transactions of type `suicide` even when they are alone in the parent transaction" do
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      expected = insert(:internal_transaction, index: 0, transaction: transaction, gas: nil, type: :suicide)
+
+      actual = Enum.at(Chain.transaction_to_internal_transactions(transaction), 0)
+
+      assert actual.id == expected.id
+    end
+
+    test "returns the internal transactions in ascending index order" do
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      %InternalTransaction{id: first_id} = insert(:internal_transaction, transaction: transaction, index: 0)
+      %InternalTransaction{id: second_id} = insert(:internal_transaction, transaction: transaction, index: 1)
+
+      result =
+        transaction
+        |> Chain.transaction_to_internal_transactions()
+        |> Enum.map(& &1.id)
+
+      assert [first_id, second_id] == result
+    end
+
+    test "pages by index" do
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      %InternalTransaction{id: first_id} = insert(:internal_transaction, transaction: transaction, index: 0)
+      %InternalTransaction{id: second_id} = insert(:internal_transaction, transaction: transaction, index: 1)
+
+      assert [^first_id, ^second_id] =
+               transaction
+               |> Chain.transaction_to_internal_transactions(paging_options: %PagingOptions{key: {-1}, page_size: 2})
+               |> Enum.map(& &1.id)
+
+      assert [^first_id] =
+               transaction
+               |> Chain.transaction_to_internal_transactions(paging_options: %PagingOptions{key: {-1}, page_size: 1})
+               |> Enum.map(& &1.id)
+
+      assert [^second_id] =
+               transaction
+               |> Chain.transaction_to_internal_transactions(paging_options: %PagingOptions{key: {0}, page_size: 2})
+               |> Enum.map(& &1.id)
+    end
+  end
+
+  describe "transaction_to_logs/2" do
     test "without logs" do
       transaction = insert(:transaction)
 
-      assert [] = Chain.transaction_to_logs(transaction.hash)
+      assert [] = Chain.transaction_to_logs(transaction)
     end
 
     test "with logs" do
@@ -1649,10 +1808,9 @@ defmodule Explorer.ChainTest do
         |> insert()
         |> with_block()
 
-      %Log{transaction_hash: transaction_hash, index: index} =
-        insert(:log, transaction: transaction, block: transaction.block, block_number: transaction.block_number)
+      %Log{id: id} = insert(:log, transaction: transaction)
 
-      assert [%Log{transaction_hash: ^transaction_hash, index: ^index}] = Chain.transaction_to_logs(transaction.hash)
+      assert [%Log{id: ^id}] = Chain.transaction_to_logs(transaction)
     end
 
     test "with logs can be paginated" do
@@ -1661,28 +1819,15 @@ defmodule Explorer.ChainTest do
         |> insert()
         |> with_block()
 
-      log =
-        insert(:log,
-          transaction: transaction,
-          index: 1,
-          block: transaction.block,
-          block_number: transaction.block_number
-        )
+      log = insert(:log, transaction: transaction, index: 1)
 
       second_page_indexes =
         2..51
-        |> Enum.map(fn index ->
-          insert(:log,
-            transaction: transaction,
-            index: index,
-            block: transaction.block,
-            block_number: transaction.block_number
-          )
-        end)
+        |> Enum.map(fn index -> insert(:log, transaction: transaction, index: index) end)
         |> Enum.map(& &1.index)
 
       assert second_page_indexes ==
-               transaction.hash
+               transaction
                |> Chain.transaction_to_logs(paging_options: %PagingOptions{key: {log.index}, page_size: 50})
                |> Enum.map(& &1.index)
     end
@@ -1693,11 +1838,11 @@ defmodule Explorer.ChainTest do
         |> insert()
         |> with_block()
 
-      insert(:log, transaction: transaction, block: transaction.block, block_number: transaction.block_number)
+      insert(:log, transaction: transaction)
 
       assert [%Log{address: %Address{}, transaction: %Transaction{}}] =
                Chain.transaction_to_logs(
-                 transaction.hash,
+                 transaction,
                  necessity_by_association: %{
                    address: :optional,
                    transaction: :optional
@@ -1709,7 +1854,7 @@ defmodule Explorer.ChainTest do
                  address: %Ecto.Association.NotLoaded{},
                  transaction: %Ecto.Association.NotLoaded{}
                }
-             ] = Chain.transaction_to_logs(transaction.hash)
+             ] = Chain.transaction_to_logs(transaction)
     end
   end
 
@@ -1717,7 +1862,7 @@ defmodule Explorer.ChainTest do
     test "without token transfers" do
       transaction = insert(:transaction)
 
-      assert [] = Chain.transaction_to_token_transfers(transaction.hash)
+      assert [] = Chain.transaction_to_token_transfers(transaction)
     end
 
     test "with token transfers" do
@@ -1726,15 +1871,9 @@ defmodule Explorer.ChainTest do
         |> insert()
         |> with_block()
 
-      %TokenTransfer{transaction_hash: transaction_hash, log_index: log_index} =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number
-        )
+      %TokenTransfer{id: id} = insert(:token_transfer, transaction: transaction)
 
-      assert [%TokenTransfer{transaction_hash: ^transaction_hash, log_index: ^log_index}] =
-               Chain.transaction_to_token_transfers(transaction.hash)
+      assert [%TokenTransfer{id: ^id}] = Chain.transaction_to_token_transfers(transaction)
     end
 
     test "token transfers necessity_by_association loads associations" do
@@ -1743,15 +1882,11 @@ defmodule Explorer.ChainTest do
         |> insert()
         |> with_block()
 
-      insert(:token_transfer,
-        transaction: transaction,
-        block: transaction.block,
-        block_number: transaction.block_number
-      )
+      insert(:token_transfer, transaction: transaction)
 
       assert [%TokenTransfer{token: %Token{}, transaction: %Transaction{}}] =
                Chain.transaction_to_token_transfers(
-                 transaction.hash,
+                 transaction,
                  necessity_by_association: %{
                    token: :optional,
                    transaction: :optional
@@ -1760,190 +1895,10 @@ defmodule Explorer.ChainTest do
 
       assert [
                %TokenTransfer{
-                 token: %Token{},
+                 token: %Ecto.Association.NotLoaded{},
                  transaction: %Ecto.Association.NotLoaded{}
                }
-             ] = Chain.transaction_to_token_transfers(transaction.hash)
-    end
-
-    test "token transfers ordered by ASC log_index" do
-      transaction =
-        :transaction
-        |> insert()
-        |> with_block()
-
-      token_transfer_0 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 0
-        )
-
-      token_transfer_4 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 4
-        )
-
-      token_transfer_2 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 2
-        )
-
-      token_transfer_1 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 1
-        )
-
-      token_transfer_3 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 3
-        )
-
-      token_transfers_sorted =
-        [token_transfer_0, token_transfer_1, token_transfer_2, token_transfer_3, token_transfer_4]
-        |> Enum.map(&{&1.transaction_hash, &1.log_index})
-
-      token_transfers_unsorted =
-        [token_transfer_1, token_transfer_0, token_transfer_2, token_transfer_3, token_transfer_4]
-        |> Enum.map(&{&1.transaction_hash, &1.log_index})
-
-      assert token_transfers_sorted ==
-               transaction.hash
-               |> Chain.transaction_to_token_transfers(
-                 necessity_by_association: %{
-                   token: :optional,
-                   transaction: :optional
-                 }
-               )
-               |> Enum.map(&{&1.transaction_hash, &1.log_index})
-
-      assert token_transfers_unsorted !=
-               transaction.hash
-               |> Chain.transaction_to_token_transfers(
-                 necessity_by_association: %{
-                   token: :optional,
-                   transaction: :optional
-                 }
-               )
-               |> Enum.map(&{&1.transaction_hash, &1.log_index})
-    end
-
-    test "token transfers can be paginated" do
-      transaction =
-        :transaction
-        |> insert()
-        |> with_block()
-
-      token_transfer_0 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 0
-        )
-
-      token_transfer_4 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 4
-        )
-
-      token_transfer_2 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 2
-        )
-
-      token_transfer_1 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 1
-        )
-
-      token_transfer_3 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 3
-        )
-
-      token_transfer_6 =
-        insert(:token_transfer,
-          transaction: transaction,
-          block: transaction.block,
-          block_number: transaction.block_number,
-          log_index: 6
-        )
-
-      token_transfers_first_page =
-        [token_transfer_0, token_transfer_1, token_transfer_2] |> Enum.map(&{&1.transaction_hash, &1.log_index})
-
-      token_transfers_second_page =
-        [token_transfer_2, token_transfer_3, token_transfer_4] |> Enum.map(&{&1.transaction_hash, &1.log_index})
-
-      token_transfers_third_page =
-        [token_transfer_4, token_transfer_6] |> Enum.map(&{&1.transaction_hash, &1.log_index})
-
-      assert token_transfers_first_page ==
-               transaction.hash
-               |> Chain.transaction_to_token_transfers(
-                 necessity_by_association: %{
-                   token: :optional,
-                   transaction: :optional
-                 },
-                 paging_options: %PagingOptions{
-                   page_size: 3
-                 }
-               )
-               |> Enum.map(&{&1.transaction_hash, &1.log_index})
-
-      assert token_transfers_second_page ==
-               transaction.hash
-               |> Chain.transaction_to_token_transfers(
-                 necessity_by_association: %{
-                   token: :optional,
-                   transaction: :optional
-                 },
-                 paging_options: %PagingOptions{
-                   key: {transaction.block_number, 1},
-                   page_size: 3
-                 }
-               )
-               |> Enum.map(&{&1.transaction_hash, &1.log_index})
-
-      assert token_transfers_third_page ==
-               transaction.hash
-               |> Chain.transaction_to_token_transfers(
-                 necessity_by_association: %{
-                   token: :optional,
-                   transaction: :optional
-                 },
-                 paging_options: %PagingOptions{
-                   key: {transaction.block_number, 3},
-                   page_size: 3
-                 }
-               )
-               |> Enum.map(&{&1.transaction_hash, &1.log_index})
+             ] = Chain.transaction_to_token_transfers(transaction)
     end
   end
 
@@ -1979,126 +1934,145 @@ defmodule Explorer.ChainTest do
     end
   end
 
-  describe "missing_block_number_ranges/1" do
-    # 0000
-    test "0..0 without blocks" do
-      assert Chain.missing_block_number_ranges(0..0) == [0..0]
+  describe "find_contract_address/1" do
+    test "doesn't find an address that doesn't have a code" do
+      address = insert(:address, contract_code: nil)
+
+      response = Chain.find_contract_address(address.hash)
+
+      assert {:error, :not_found} == response
     end
 
-    # 0001
-    test "0..0 with block 3" do
-      insert(:block, number: 3)
+    test "doesn't find a nonexistent address" do
+      nonexistent_address_hash = Factory.address_hash()
 
-      assert Chain.missing_block_number_ranges(0..0) == [0..0]
+      response = Chain.find_contract_address(nonexistent_address_hash)
+
+      assert {:error, :not_found} == response
     end
 
-    # 0010
-    test "0..0 with block 2" do
-      insert(:block, number: 2)
+    test "finds an contract address" do
+      address =
+        insert(:address, contract_code: Factory.data("contract_code"), smart_contract: nil, names: [])
+        |> Repo.preload([:contracts_creation_internal_transaction, :token])
 
-      assert Chain.missing_block_number_ranges(0..0) == [0..0]
+      response = Chain.find_contract_address(address.hash)
+
+      assert response == {:ok, address}
+    end
+  end
+
+  describe "block_reward/1" do
+    setup do
+      %{block_range: range} = block_reward = insert(:block_reward)
+
+      block = insert(:block, number: Enum.random(Range.new(range.from, range.to)))
+      insert(:transaction)
+
+      {:ok, block: block, block_reward: block_reward}
     end
 
-    # 0011
-    test "0..0 with blocks 2,3" do
-      Enum.each([2, 3], &insert(:block, number: &1))
+    test "with block containing transactions", %{block: block, block_reward: block_reward} do
+      :transaction
+      |> insert(gas_price: 1)
+      |> with_block(block, gas_used: 1)
 
-      assert Chain.missing_block_number_ranges(0..0) == [0..0]
+      :transaction
+      |> insert(gas_price: 1)
+      |> with_block(block, gas_used: 2)
+
+      expected =
+        block_reward.reward
+        |> Wei.to(:wei)
+        |> Decimal.add(Decimal.new(3))
+        |> Wei.from(:wei)
+
+      assert expected == Chain.block_reward(block)
     end
 
-    # 0100
-    test "0..0 with block 1" do
-      insert(:block, number: 1)
+    test "with block without transactions", %{block: block, block_reward: block_reward} do
+      assert block_reward.reward == Chain.block_reward(block)
+    end
+  end
 
-      assert Chain.missing_block_number_ranges(0..0) == [0..0]
+  describe "recent_collated_transactions/1" do
+    test "with no collated transactions it returns an empty list" do
+      assert [] == Explorer.Chain.recent_collated_transactions()
     end
 
-    # 0101
-    test "0..0 with blocks 1,3" do
-      Enum.each([1, 3], fn num ->
-        insert(:block, number: num)
-        Process.sleep(200)
-      end)
-
-      assert Chain.missing_block_number_ranges(0..0) == [0..0]
+    test "it excludes pending transactions" do
+      insert(:transaction)
+      assert [] == Explorer.Chain.recent_collated_transactions()
     end
 
-    # 0111
-    test "0..0 with blocks 1..3" do
-      Enum.each(1..3, fn num ->
-        insert(:block, number: num)
-        Process.sleep(200)
-      end)
+    test "excludes reorg transaction" do
+      block = insert(:block, consensus: false)
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
 
-      assert Chain.missing_block_number_ranges(0..0) == [0..0]
+      assert [] == Chain.recent_collated_transactions()
     end
 
-    # 1000
-    test "0..0 with block 0" do
-      insert(:block, number: 0)
+    test "returns non-reorg transactions while excluding the reorg transaction" do
+      valid_transaction =
+        :transaction
+        |> insert()
+        |> with_block()
 
-      assert Chain.missing_block_number_ranges(0..0) == []
+      reorg_block = insert(:block, consensus: false)
+      reorg_transaction =
+        :transaction
+        |> insert()
+        |> with_block(reorg_block)
+      insert(:transaction_fork, hash: reorg_transaction.hash, uncle_hash: reorg_block.hash)
+
+      transaction_hashes =
+        Chain.recent_collated_transactions()
+        |> Enum.map(& &1.hash)
+
+      assert transaction_hashes == [valid_transaction.hash]
     end
 
-    # 1001
-    test "0..0 with blocks 0,3" do
-      Enum.each([0, 3], &insert(:block, number: &1))
+    test "returns a list of recent collated transactions" do
+      newest_first_transactions =
+        50
+        |> insert_list(:transaction)
+        |> with_block()
+        |> Enum.reverse()
 
-      assert Chain.missing_block_number_ranges(0..0) == []
+      oldest_seen = Enum.at(newest_first_transactions, 9)
+      paging_options = %Explorer.PagingOptions{page_size: 10, key: {oldest_seen.block_number, oldest_seen.index}}
+      recent_collated_transactions = Explorer.Chain.recent_collated_transactions(paging_options: paging_options)
+
+      assert length(recent_collated_transactions) == 10
+      assert hd(recent_collated_transactions).hash == Enum.at(newest_first_transactions, 10).hash
     end
 
-    # 1010
-    test "0..0 with blocks 0,2" do
-      Enum.each([0, 2], &insert(:block, number: &1))
+    test "returns transactions with token_transfers preloaded" do
+      address = insert(:address)
+      token_contract_address = insert(:contract_address)
+      token = insert(:token, contract_address: token_contract_address)
 
-      assert Chain.missing_block_number_ranges(0..0) == []
-    end
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
 
-    # 1011
-    test "0..0 with blocks 0,2,3" do
-      Enum.each([0, 2, 3], &insert(:block, number: &1))
+      insert_list(
+        2,
+        :token_transfer,
+        to_address: address,
+        transaction: transaction,
+        token_contract_address: token_contract_address,
+        token: token
+      )
 
-      assert Chain.missing_block_number_ranges(0..0) == []
-    end
-
-    # 1100
-    test "0..0 with blocks 0..1" do
-      Enum.each(0..1, &insert(:block, number: &1))
-
-      assert Chain.missing_block_number_ranges(0..0) == []
-    end
-
-    # 1101
-    test "0..0 with blocks 0,1,3" do
-      Enum.each([0, 1, 3], fn num ->
-        insert(:block, number: num)
-        Process.sleep(200)
-      end)
-
-      assert Chain.missing_block_number_ranges(0..0) == []
-    end
-
-    # 1110
-    test "0..0 with blocks 0..2" do
-      Enum.each(0..2, &insert(:block, number: &1))
-
-      assert Chain.missing_block_number_ranges(0..0) == []
-    end
-
-    # 1111
-    test "0..0 with blocks 0..3" do
-      Enum.each(0..2, fn num ->
-        insert(:block, number: num)
-        Process.sleep(200)
-      end)
-
-      assert Chain.missing_block_number_ranges(0..0) == []
-    end
-
-    test "0..2 with block 1" do
-      insert(:block, number: 1)
-
-      assert Chain.missing_block_number_ranges(0..2) == [0..0, 2..2]
+      fetched_transaction = List.first(Explorer.Chain.recent_collated_transactions())
+      assert fetched_transaction.hash == transaction.hash
+      assert length(fetched_transaction.token_transfers) == 2
     end
   end
 
@@ -2119,17 +2093,506 @@ defmodule Explorer.ChainTest do
         transaction: transaction,
         index: 0,
         created_contract_address: created_contract_address,
-        created_contract_code: smart_contract_bytecode,
-        block_number: transaction.block_number,
-        transaction_index: transaction.index
+        created_contract_code: smart_contract_bytecode
       )
 
       assert Chain.smart_contract_bytecode(created_contract_address.hash) == smart_contract_bytecode
     end
   end
 
+  describe "create_smart_contract/1" do
+    setup do
+      smart_contract_bytecode =
+        "0x608060405234801561001057600080fd5b5060df8061001f6000396000f3006080604052600436106049576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff16806360fe47b114604e5780636d4ce63c146078575b600080fd5b348015605957600080fd5b5060766004803603810190808035906020019092919050505060a0565b005b348015608357600080fd5b50608a60aa565b6040518082815260200191505060405180910390f35b8060008190555050565b600080549050905600a165627a7a7230582040d82a7379b1ee1632ad4d8a239954fd940277b25628ead95259a85c5eddb2120029"
+
+      created_contract_address =
+        insert(
+          :address,
+          hash: "0x0f95fa9bc0383e699325f2658d04e8d96d87b90c",
+          contract_code: smart_contract_bytecode
+        )
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      insert(
+        :internal_transaction_create,
+        transaction: transaction,
+        index: 0,
+        created_contract_address: created_contract_address,
+        created_contract_code: smart_contract_bytecode
+      )
+
+      valid_attrs = %{
+        address_hash: "0x0f95fa9bc0383e699325f2658d04e8d96d87b90c",
+        name: "SimpleStorage",
+        compiler_version: "0.4.23",
+        optimization: false,
+        contract_source_code:
+          "pragma solidity ^0.4.23; contract SimpleStorage {uint storedData; function set(uint x) public {storedData = x; } function get() public constant returns (uint) {return storedData; } }",
+        abi: [
+          %{
+            "constant" => false,
+            "inputs" => [%{"name" => "x", "type" => "uint256"}],
+            "name" => "set",
+            "outputs" => [],
+            "payable" => false,
+            "stateMutability" => "nonpayable",
+            "type" => "function"
+          },
+          %{
+            "constant" => true,
+            "inputs" => [],
+            "name" => "get",
+            "outputs" => [%{"name" => "", "type" => "uint256"}],
+            "payable" => false,
+            "stateMutability" => "view",
+            "type" => "function"
+          }
+        ]
+      }
+
+      {:ok, valid_attrs: valid_attrs, address: created_contract_address}
+    end
+
+    test "with valid data creates a smart contract", %{valid_attrs: valid_attrs} do
+      assert {:ok, %SmartContract{} = smart_contract} = Chain.create_smart_contract(valid_attrs)
+      assert smart_contract.name == "SimpleStorage"
+      assert smart_contract.compiler_version == "0.4.23"
+      assert smart_contract.optimization == false
+      assert smart_contract.contract_source_code != ""
+      assert smart_contract.abi != ""
+
+      assert Repo.get_by(
+               Address.Name,
+               address_hash: smart_contract.address_hash,
+               name: smart_contract.name,
+               primary: true
+             )
+    end
+
+    test "clears an existing primary name and sets the new one", %{valid_attrs: valid_attrs, address: address} do
+      insert(:address_name, address: address, primary: true)
+      assert {:ok, %SmartContract{} = smart_contract} = Chain.create_smart_contract(valid_attrs)
+
+      assert Repo.get_by(
+               Address.Name,
+               address_hash: smart_contract.address_hash,
+               name: smart_contract.name,
+               primary: true
+             )
+    end
+
+    test "trims whitespace from address name", %{valid_attrs: valid_attrs} do
+      attrs = %{valid_attrs | name: "     SimpleStorage     "}
+      assert {:ok, _} = Chain.create_smart_contract(attrs)
+      assert Repo.get_by(Address.Name, name: "SimpleStorage")
+    end
+  end
+
+  describe "stream_unfetched_balances/2" do
+    test "with `t:Explorer.Chain.Address.CoinBalance.t/0` with value_fetched_at with same `address_hash` and `block_number` " <>
+           "does not return `t:Explorer.Chain.Block.t/0` `miner_hash`" do
+      %Address{hash: miner_hash} = miner = insert(:address)
+      %Block{number: block_number} = insert(:block, miner: miner)
+      balance = insert(:unfetched_balance, address_hash: miner_hash, block_number: block_number)
+
+      assert {:ok, [%{address_hash: ^miner_hash, block_number: ^block_number}]} =
+               Chain.stream_unfetched_balances([], &[&1 | &2])
+
+      update_balance_value(balance, 1)
+
+      assert {:ok, []} = Chain.stream_unfetched_balances([], &[&1 | &2])
+    end
+
+    test "with `t:Explorer.Chain.Address.CoinBalance.t/0` with value_fetched_at with same `address_hash` and `block_number` " <>
+           "does not return `t:Explorer.Chain.Transaction.t/0` `from_address_hash`" do
+      %Address{hash: from_address_hash} = from_address = insert(:address)
+      %Block{number: block_number} = block = insert(:block)
+
+      :transaction
+      |> insert(from_address: from_address)
+      |> with_block(block)
+
+      balance = insert(:unfetched_balance, address_hash: from_address_hash, block_number: block_number)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      assert %{address_hash: from_address_hash, block_number: block_number} in balance_fields_list
+
+      update_balance_value(balance, 1)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      refute %{address_hash: from_address_hash, block_number: block_number} in balance_fields_list
+    end
+
+    test "with `t:Explorer.Chain.Address.CoinBalance.t/0` with value_fetched_at with same `address_hash` and `block_number` " <>
+           "does not return `t:Explorer.Chain.Transaction.t/0` `to_address_hash`" do
+      %Address{hash: to_address_hash} = to_address = insert(:address)
+      %Block{number: block_number} = block = insert(:block)
+
+      :transaction
+      |> insert(to_address: to_address)
+      |> with_block(block)
+
+      balance = insert(:unfetched_balance, address_hash: to_address_hash, block_number: block_number)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      assert %{address_hash: to_address_hash, block_number: block_number} in balance_fields_list
+
+      update_balance_value(balance, 1)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      refute %{address_hash: to_address_hash, block_number: block_number} in balance_fields_list
+    end
+
+    test "with `t:Explorer.Chain.Address.CoinBalance.t/0` with value_fetched_at with same `address_hash` and `block_number` " <>
+           "does not return `t:Explorer.Chain.Log.t/0` `address_hash`" do
+      address = insert(:address)
+      block = insert(:block)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      insert(:log, address: address, transaction: transaction)
+
+      balance = insert(:unfetched_balance, address_hash: address.hash, block_number: block.number)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      assert %{
+               address_hash: address.hash,
+               block_number: block.number
+             } in balance_fields_list
+
+      update_balance_value(balance, 1)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      refute %{
+               address_hash: address.hash,
+               block_number: block.number
+             } in balance_fields_list
+    end
+
+    test "with `t:Explorer.Chain.Address.CoinBalance.t/0` with value_fetched_at with same `address_hash` and `block_number` " <>
+           "does not return `t:Explorer.Chain.InternalTransaction.t/0` `created_contract_address_hash`" do
+      created_contract_address = insert(:address)
+      block = insert(:block)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      insert(
+        :internal_transaction_create,
+        created_contract_address: created_contract_address,
+        index: 0,
+        transaction: transaction
+      )
+
+      balance = insert(:unfetched_balance, address_hash: created_contract_address.hash, block_number: block.number)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      assert %{
+               address_hash: created_contract_address.hash,
+               block_number: block.number
+             } in balance_fields_list
+
+      update_balance_value(balance, 1)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      refute %{
+               address_hash: created_contract_address.hash,
+               block_number: block.number
+             } in balance_fields_list
+    end
+
+    test "with `t:Explorer.Chain.Address.CoinBalance.t/0` with value_fetched_at with same `address_hash` and `block_number` " <>
+           "does not return `t:Explorer.Chain.InternalTransaction.t/0` `from_address_hash`" do
+      from_address = insert(:address)
+      block = insert(:block)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      insert(
+        :internal_transaction_create,
+        from_address: from_address,
+        index: 0,
+        transaction: transaction
+      )
+
+      balance = insert(:unfetched_balance, address_hash: from_address.hash, block_number: block.number)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      assert %{address_hash: from_address.hash, block_number: block.number} in balance_fields_list
+
+      update_balance_value(balance, 1)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      refute %{address_hash: from_address.hash, block_number: block.number} in balance_fields_list
+    end
+
+    test "with `t:Explorer.Chain.Address.CoinBalance.t/0` with value_fetched_at with same `address_hash` and `block_number` " <>
+           "does not return `t:Explorer.Chain.InternalTransaction.t/0` `to_address_hash`" do
+      to_address = insert(:address)
+      block = insert(:block)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      insert(
+        :internal_transaction_create,
+        to_address: to_address,
+        index: 0,
+        transaction: transaction
+      )
+
+      balance = insert(:unfetched_balance, address_hash: to_address.hash, block_number: block.number)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      assert %{address_hash: to_address.hash, block_number: block.number} in balance_fields_list
+
+      update_balance_value(balance, 1)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      refute %{address_hash: to_address.hash, block_number: block.number} in balance_fields_list
+    end
+
+    test "an address_hash used for multiple block_numbers returns all block_numbers" do
+      miner = insert(:address)
+      mined_block = insert(:block, miner: miner)
+
+      insert(:unfetched_balance, address_hash: miner.hash, block_number: mined_block.number)
+
+      from_transaction_block = insert(:block)
+
+      :transaction
+      |> insert(from_address: miner)
+      |> with_block(from_transaction_block)
+
+      insert(:unfetched_balance, address_hash: miner.hash, block_number: from_transaction_block.number)
+
+      to_transaction_block = insert(:block)
+
+      :transaction
+      |> insert(to_address: miner)
+      |> with_block(to_transaction_block)
+
+      insert(:unfetched_balance, address_hash: miner.hash, block_number: to_transaction_block.number)
+
+      log_block = insert(:block)
+
+      log_transaction =
+        :transaction
+        |> insert()
+        |> with_block(log_block)
+
+      insert(:log, address: miner, transaction: log_transaction)
+      insert(:unfetched_balance, address_hash: miner.hash, block_number: log_block.number)
+
+      from_internal_transaction_block = insert(:block)
+
+      from_internal_transaction_transaction =
+        :transaction
+        |> insert()
+        |> with_block(from_internal_transaction_block)
+
+      insert(
+        :internal_transaction_create,
+        from_address: miner,
+        index: 0,
+        transaction: from_internal_transaction_transaction
+      )
+
+      insert(:unfetched_balance, address_hash: miner.hash, block_number: from_internal_transaction_block.number)
+
+      to_internal_transaction_block = insert(:block)
+
+      to_internal_transaction_transaction =
+        :transaction
+        |> insert()
+        |> with_block(to_internal_transaction_block)
+
+      insert(
+        :internal_transaction_create,
+        index: 0,
+        to_address: miner,
+        transaction: to_internal_transaction_transaction
+      )
+
+      insert(:unfetched_balance, address_hash: miner.hash, block_number: to_internal_transaction_block.number)
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      balance_fields_list_by_address_hash = Enum.group_by(balance_fields_list, & &1.address_hash)
+
+      assert balance_fields_list_by_address_hash[miner.hash] |> Enum.map(& &1.block_number) |> Enum.sort() ==
+               Enum.sort([
+                 to_internal_transaction_block.number,
+                 from_internal_transaction_block.number,
+                 log_block.number,
+                 to_transaction_block.number,
+                 from_transaction_block.number,
+                 mined_block.number
+               ])
+    end
+
+    test "an address_hash used for the same block_number is only returned once" do
+      miner = insert(:address)
+      block = insert(:block, miner: miner)
+
+      insert(:unfetched_balance, address_hash: miner.hash, block_number: block.number)
+
+      :transaction
+      |> insert(from_address: miner)
+      |> with_block(block)
+
+      :transaction
+      |> insert(to_address: miner)
+      |> with_block(block)
+
+      log_transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      insert(:log, address: miner, transaction: log_transaction)
+
+      from_internal_transaction_transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      insert(
+        :internal_transaction_create,
+        from_address: miner,
+        index: 0,
+        transaction: from_internal_transaction_transaction
+      )
+
+      to_internal_transaction_transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      insert(
+        :internal_transaction_create,
+        to_address: miner,
+        index: 0,
+        transaction: to_internal_transaction_transaction
+      )
+
+      {:ok, balance_fields_list} =
+        Explorer.Chain.stream_unfetched_balances(
+          [],
+          fn balance_fields, acc -> [balance_fields | acc] end
+        )
+
+      balance_fields_list_by_address_hash = Enum.group_by(balance_fields_list, & &1.address_hash)
+
+      assert balance_fields_list_by_address_hash[miner.hash] |> Enum.map(& &1.block_number) |> Enum.sort() == [
+               block.number
+             ]
+    end
+  end
+
+  describe "stream_unfetched_token_balances/2" do
+    test "executes the given reducer with the query result" do
+      address = insert(:address, hash: "0xc45e4830dff873cf8b70de2b194d0ddd06ef651e")
+      token_balance = insert(:token_balance, value_fetched_at: nil, address: address)
+      insert(:token_balance)
+
+      assert Chain.stream_unfetched_token_balances([], &[&1.block_number | &2]) == {:ok, [token_balance.block_number]}
+    end
+  end
+
+  describe "stream_unfetched_uncle_hashes/2" do
+    test "does not return uncle hashes where t:Explorer.Chain.Block.SecondDegreeRelation.t/0 uncle_fetched_at is not nil" do
+      %Block.SecondDegreeRelation{nephew: %Block{}, uncle_hash: uncle_hash} = insert(:block_second_degree_relation)
+
+      assert {:ok, [^uncle_hash]} = Explorer.Chain.stream_unfetched_uncle_hashes([], &[&1 | &2])
+
+      query = from(bsdr in Block.SecondDegreeRelation, where: bsdr.uncle_hash == ^uncle_hash)
+
+      assert {1, _} = Repo.update_all(query, set: [uncle_fetched_at: DateTime.utc_now()])
+
+      assert {:ok, []} = Explorer.Chain.stream_unfetched_uncle_hashes([], &[&1 | &2])
+    end
+  end
+
   test "total_supply/0" do
-    Application.put_env(:explorer, :supply, Explorer.Chain.Supply.ProofOfAuthority)
     height = 2_000_000
     insert(:block, number: height)
     expected = ProofOfAuthority.initial_supply() + height
@@ -2138,8 +2601,21 @@ defmodule Explorer.ChainTest do
   end
 
   test "circulating_supply/0" do
-    Application.put_env(:explorer, :supply, Explorer.Chain.Supply.ProofOfAuthority)
     assert Chain.circulating_supply() == ProofOfAuthority.circulating()
+  end
+
+  describe "address_hash_to_smart_contract/1" do
+    test "fetches a smart contract" do
+      smart_contract = insert(:smart_contract)
+
+      assert ^smart_contract = Chain.address_hash_to_smart_contract(smart_contract.address_hash)
+    end
+  end
+
+  test "subscribe_to_events/1" do
+    assert :ok == Chain.subscribe_to_events(:logs)
+    current_pid = self()
+    assert [{^current_pid, _}] = Registry.lookup(Registry.ChainEvents, :logs)
   end
 
   describe "token_from_address_hash/1" do
@@ -2152,21 +2628,6 @@ defmodule Explorer.ChainTest do
     test "with hash that doesn't exist" do
       token = build(:token)
       assert {:error, :not_found} = Chain.token_from_address_hash(token.contract_address.hash)
-    end
-
-    test "with contract_address' smart_contract preloaded" do
-      smart_contract = build(:smart_contract)
-      address = insert(:address, smart_contract: smart_contract)
-      token = insert(:token, contract_address: address)
-      options = [necessity_by_association: %{[contract_address: :smart_contract] => :optional}]
-
-      assert {:ok, result} = Chain.token_from_address_hash(token.contract_address_hash, options)
-
-      assert address.smart_contract.address_hash == result.contract_address.smart_contract.address_hash
-      assert address.smart_contract.contract_code_md5 == result.contract_address.smart_contract.contract_code_md5
-      assert address.smart_contract.abi == result.contract_address.smart_contract.abi
-      assert address.smart_contract.contract_source_code == result.contract_address.smart_contract.contract_source_code
-      assert address.smart_contract.name == result.contract_address.smart_contract.name
     end
   end
 
@@ -2191,48 +2652,371 @@ defmodule Explorer.ChainTest do
     end
   end
 
+  describe "update_token/2" do
+    test "updates a token's values" do
+      token = insert(:token, name: nil, symbol: nil, total_supply: nil, decimals: nil, cataloged: false)
+
+      update_params = %{
+        name: "Hodl Token",
+        symbol: "HT",
+        total_supply: 10,
+        decimals: 1,
+        cataloged: true
+      }
+
+      assert {:ok, updated_token} = Chain.update_token(token, update_params)
+      assert updated_token.name == update_params.name
+      assert updated_token.symbol == update_params.symbol
+      assert updated_token.total_supply == Decimal.new(update_params.total_supply)
+      assert updated_token.decimals == update_params.decimals
+      assert updated_token.cataloged
+    end
+
+    test "trims names of whitespace" do
+      token = insert(:token, name: nil, symbol: nil, total_supply: nil, decimals: nil, cataloged: false)
+
+      update_params = %{
+        name: "      Hodl Token     ",
+        symbol: "HT",
+        total_supply: 10,
+        decimals: 1,
+        cataloged: true
+      }
+
+      assert {:ok, updated_token} = Chain.update_token(token, update_params)
+      assert updated_token.name == "Hodl Token"
+      assert Repo.get_by(Address.Name, name: "Hodl Token")
+    end
+
+    test "inserts an address name record when token has a name in params" do
+      token = insert(:token, name: nil, symbol: nil, total_supply: nil, decimals: nil, cataloged: false)
+
+      update_params = %{
+        name: "Hodl Token",
+        symbol: "HT",
+        total_supply: 10,
+        decimals: 1,
+        cataloged: true
+      }
+
+      Chain.update_token(token, update_params)
+      assert Repo.get_by(Address.Name, name: update_params.name, address_hash: token.contract_address_hash)
+    end
+
+    test "does not insert address name record when token doesn't have name in params" do
+      token = insert(:token, name: nil, symbol: nil, total_supply: nil, decimals: nil, cataloged: false)
+
+      update_params = %{
+        cataloged: true
+      }
+
+      Chain.update_token(token, update_params)
+      refute Repo.get_by(Address.Name, address_hash: token.contract_address_hash)
+    end
+
+    test "stores token with big 'decimals' values" do
+      token = insert(:token, name: nil, symbol: nil, total_supply: nil, decimals: nil, cataloged: false)
+
+      update_params = %{
+        name: "Hodl Token",
+        symbol: "HT",
+        total_supply: 10,
+        decimals: 1_000_000_000_000_000_000,
+        cataloged: true
+      }
+
+      assert {:ok, updated_token} = Chain.update_token(token, update_params)
+    end
+  end
+
   describe "fetch_last_token_balances/1" do
     test "returns the token balances given the address hash" do
       address = insert(:address)
-      current_token_balance = insert(:address_current_token_balance, address: address)
-      insert(:address_current_token_balance, address: build(:address))
+      token_balance = insert(:token_balance, address: address)
+      insert(:token_balance, address: build(:address))
 
       token_balances =
         address.hash
         |> Chain.fetch_last_token_balances()
-        |> Enum.map(fn token_balance -> token_balance.address_hash end)
+        |> Enum.map(& &1.address_hash)
 
-      assert token_balances == [current_token_balance.address_hash]
+      assert token_balances == [token_balance.address_hash]
+    end
+
+    test "returns the value from the last block" do
+      address = insert(:address)
+      token_a = insert(:token, contract_address: build(:contract_address))
+      token_b = insert(:token, contract_address: build(:contract_address))
+
+      insert(
+        :token_balance,
+        address: address,
+        block_number: 1000,
+        token_contract_address_hash: token_a.contract_address_hash,
+        value: 5000
+      )
+
+      token_balance_a =
+        insert(
+          :token_balance,
+          address: address,
+          block_number: 1001,
+          token_contract_address_hash: token_a.contract_address_hash,
+          value: 4000
+        )
+
+      insert(
+        :token_balance,
+        address: address,
+        block_number: 1000,
+        token_contract_address_hash: token_b.contract_address_hash,
+        value: 3000
+      )
+
+      token_balance_b =
+        insert(
+          :token_balance,
+          address: address,
+          block_number: 1001,
+          token_contract_address_hash: token_b.contract_address_hash,
+          value: 2000
+        )
+
+      token_balances = Chain.fetch_last_token_balances(address.hash)
+
+      assert Enum.count(token_balances) == 2
+      assert Enum.map(token_balances, & &1.value) == [token_balance_a.value, token_balance_b.value]
+    end
+
+    test "returns an empty list when there are no token balances" do
+      address = insert(:address)
+
+      insert(:token_balance, address: build(:address))
+
+      assert Chain.fetch_last_token_balances(address.hash) == []
+    end
+
+    test "does not consider other blocks when the last block has the value 0" do
+      address = insert(:address)
+      token = insert(:token, contract_address: build(:contract_address))
+
+      insert(
+        :token_balance,
+        address: address,
+        block_number: 1000,
+        token_contract_address_hash: token.contract_address_hash,
+        value: 5000
+      )
+
+      insert(
+        :token_balance,
+        address: address,
+        block_number: 1001,
+        token_contract_address_hash: token.contract_address_hash,
+        value: 0
+      )
+
+      assert Chain.fetch_last_token_balances(address.hash) == []
     end
   end
 
-  describe "fetch_token_holders_from_token_hash/3" do
-    test "returns the token holders" do
+  describe "fetch_token_holders_from_token_hash/2" do
+    test "returns the last value for each address" do
       %Token{contract_address_hash: contract_address_hash} = insert(:token)
-      address_a = insert(:address)
-      address_b = insert(:address)
+      address = insert(:address)
 
       insert(
-        :address_current_token_balance,
-        address: address_a,
+        :token_balance,
+        address: address,
+        block_number: 1000,
         token_contract_address_hash: contract_address_hash,
         value: 5000
       )
 
       insert(
-        :address_current_token_balance,
-        address: address_b,
+        :token_balance,
         block_number: 1001,
         token_contract_address_hash: contract_address_hash,
         value: 4000
       )
 
-      token_holders_count =
+      insert(
+        :token_balance,
+        address: address,
+        block_number: 1002,
+        token_contract_address_hash: contract_address_hash,
+        value: 2000
+      )
+
+      values =
         contract_address_hash
         |> Chain.fetch_token_holders_from_token_hash([])
-        |> Enum.count()
+        |> Enum.map(&Decimal.to_integer(&1.value))
 
-      assert token_holders_count == 2
+      assert values == [4000, 2000]
+    end
+
+    test "sort by the highest value" do
+      %Token{contract_address_hash: contract_address_hash} = insert(:token)
+
+      insert(
+        :token_balance,
+        block_number: 1000,
+        token_contract_address_hash: contract_address_hash,
+        value: 2000
+      )
+
+      insert(
+        :token_balance,
+        block_number: 1001,
+        token_contract_address_hash: contract_address_hash,
+        value: 1000
+      )
+
+      insert(
+        :token_balance,
+        block_number: 1002,
+        token_contract_address_hash: contract_address_hash,
+        value: 4000
+      )
+
+      insert(
+        :token_balance,
+        block_number: 1002,
+        token_contract_address_hash: contract_address_hash,
+        value: 3000
+      )
+
+      values =
+        contract_address_hash
+        |> Chain.fetch_token_holders_from_token_hash([])
+        |> Enum.map(&Decimal.to_integer(&1.value))
+
+      assert values == [4000, 3000, 2000, 1000]
+    end
+
+    test "returns only token balances that have value" do
+      %Token{contract_address_hash: contract_address_hash} = insert(:token)
+
+      insert(
+        :token_balance,
+        token_contract_address_hash: contract_address_hash,
+        value: 0
+      )
+
+      assert Chain.fetch_token_holders_from_token_hash(contract_address_hash, []) == []
+    end
+
+    test "returns an empty list when there are no address with value greater than 0" do
+      %Token{contract_address_hash: contract_address_hash} = insert(:token)
+
+      insert(:token_balance, value: 1000)
+
+      assert Chain.fetch_token_holders_from_token_hash(contract_address_hash, []) == []
+    end
+
+    test "ignores the burn address" do
+      {:ok, burn_address_hash} = Chain.string_to_address_hash("0x0000000000000000000000000000000000000000")
+
+      burn_address = insert(:address, hash: burn_address_hash)
+
+      %Token{contract_address_hash: contract_address_hash} = insert(:token)
+
+      insert(
+        :token_balance,
+        address: burn_address,
+        token_contract_address_hash: contract_address_hash,
+        value: 1000
+      )
+
+      assert Chain.fetch_token_holders_from_token_hash(contract_address_hash, []) == []
+    end
+
+    test "paginates the result by value and different address" do
+      address_a = build(:address, hash: "0xcb2cf1fd3199584ac5faa16c6aca49472dc6495a")
+      address_b = build(:address, hash: "0x5f26097334b6a32b7951df61fd0c5803ec5d8354")
+
+      %Token{contract_address_hash: contract_address_hash} = insert(:token)
+
+      first_page =
+        insert(
+          :token_balance,
+          address: address_a,
+          token_contract_address_hash: contract_address_hash,
+          value: 4000
+        )
+
+      second_page =
+        insert(
+          :token_balance,
+          address: address_b,
+          token_contract_address_hash: contract_address_hash,
+          value: 4000
+        )
+
+      paging_options = %PagingOptions{
+        key: {first_page.value, first_page.address_hash},
+        page_size: 2
+      }
+
+      holders_paginated =
+        contract_address_hash
+        |> Chain.fetch_token_holders_from_token_hash(paging_options: paging_options)
+        |> Enum.map(& &1.address_hash)
+
+      assert holders_paginated == [second_page.address_hash]
+    end
+
+    test "considers the last block only if it has value" do
+      address = insert(:address, hash: "0x5f26097334b6a32b7951df61fd0c5803ec5d8354")
+      %Token{contract_address_hash: contract_address_hash} = insert(:token)
+
+      insert(
+        :token_balance,
+        address: address,
+        block_number: 1000,
+        token_contract_address_hash: contract_address_hash,
+        value: 5000
+      )
+
+      insert(
+        :token_balance,
+        address: address,
+        block_number: 1002,
+        token_contract_address_hash: contract_address_hash,
+        value: 0
+      )
+
+      assert Chain.fetch_token_holders_from_token_hash(contract_address_hash, []) == []
+    end
+  end
+
+  describe "count_token_holders_from_token_hash" do
+    test "returns the most current count about token holders" do
+      address_a = insert(:address, hash: "0xe49fedd93960a0267b3c3b2c1e2d66028e013fee")
+      address_b = insert(:address, hash: "0x5f26097334b6a32b7951df61fd0c5803ec5d8354")
+
+      %Token{contract_address_hash: contract_address_hash} = insert(:token)
+
+      insert(
+        :token_balance,
+        address: address_a,
+        block_number: 1000,
+        token_contract_address_hash: contract_address_hash,
+        value: 5000
+      )
+
+      insert(
+        :token_balance,
+        address: address_b,
+        block_number: 1002,
+        token_contract_address_hash: contract_address_hash,
+        value: 1000
+      )
+
+      TokenHoldersCounter.consolidate()
+
+      assert Chain.count_token_holders_from_token_hash(contract_address_hash) == 2
     end
   end
 
@@ -2312,259 +3096,56 @@ defmodule Explorer.ChainTest do
 
       assert result == [transaction.hash]
     end
+  end
 
-    test "correct ordering for token transfers (ASC log_index)" do
-      address = insert(:address)
-      token = insert(:token)
+  describe "address_to_unique_tokens/2" do
+    test "unique tokens can be paginated through token_id" do
+      token_contract_address = insert(:contract_address)
+      token = insert(:token, contract_address: token_contract_address, type: "ERC-721")
 
       transaction =
         :transaction
         |> insert()
-        |> with_block()
-
-      insert(
-        :token_transfer,
-        amount: 2,
-        to_address: address,
-        token_contract_address: token.contract_address,
-        transaction: transaction,
-        log_index: 2
-      )
-
-      insert(
-        :token_transfer,
-        amount: 1,
-        to_address: address,
-        token_contract_address: token.contract_address,
-        transaction: transaction,
-        log_index: 0
-      )
-
-      insert(
-        :token_transfer,
-        amount: 1,
-        to_address: address,
-        token_contract_address: token.contract_address,
-        transaction: transaction,
-        log_index: 1
-      )
-
-      assert [result] = Chain.address_to_transactions_with_token_transfers(address.hash, token.contract_address_hash)
-
-      assert [{transaction.hash, 0}, {transaction.hash, 1}, {transaction.hash, 2}] ==
-               result.token_transfers |> Enum.map(&{&1.transaction_hash, &1.log_index})
-    end
-  end
-
-  describe "address_to_balances_by_day/1" do
-    test "return a list of balances by day" do
-      address = insert(:address)
-      today = NaiveDateTime.utc_now()
-      noon = Timex.set(today, hour: 12)
-      block = insert(:block, timestamp: noon, number: 50)
-      yesterday = Timex.shift(noon, days: -1)
-      block_one_day_ago = insert(:block, timestamp: yesterday, number: 49)
-      insert(:fetched_balance, address_hash: address.hash, value: 1000, block_number: block.number)
-      insert(:fetched_balance, address_hash: address.hash, value: 2000, block_number: block_one_day_ago.number)
-      insert(:fetched_balance_daily, address_hash: address.hash, value: 1000, day: noon)
-      insert(:fetched_balance_daily, address_hash: address.hash, value: 2000, day: yesterday)
-
-      balances = Chain.address_to_balances_by_day(address.hash)
-
-      assert balances == [
-               %{date: yesterday |> NaiveDateTime.to_date() |> Date.to_string(), value: Decimal.new("2E-15")},
-               %{date: today |> NaiveDateTime.to_date() |> Date.to_string(), value: Decimal.new("1E-15")}
-             ]
-    end
-
-    test "adds todays entry" do
-      address = insert(:address)
-      today = NaiveDateTime.utc_now()
-      noon = Timex.set(today, hour: 12)
-      yesterday = Timex.shift(noon, days: -1)
-      block_one_day_ago = insert(:block, timestamp: yesterday)
-      insert(:fetched_balance, address_hash: address.hash, value: 1000, block_number: block_one_day_ago.number)
-      insert(:fetched_balance_daily, address_hash: address.hash, value: 1000, day: yesterday)
-
-      balances = Chain.address_to_balances_by_day(address.hash)
-
-      assert balances == [
-               %{date: yesterday |> NaiveDateTime.to_date() |> Date.to_string(), value: Decimal.new("1E-15")},
-               %{date: today |> NaiveDateTime.to_date() |> Date.to_string(), value: Decimal.new("1E-15")}
-             ]
-    end
-
-    # Flaky test
-    # test "uses last block value if there a couple of change in the same day" do
-    #   address = insert(:address)
-    #   today = NaiveDateTime.utc_now()
-    #   past = Timex.shift(today, hours: -1)
-
-    #   block_now = insert(:block, timestamp: today, number: 1)
-    #   insert(:fetched_balance, address_hash: address.hash, value: 1, block_number: block_now.number)
-
-    #   block_past = insert(:block, timestamp: past, number: 2)
-    #   insert(:fetched_balance, address_hash: address.hash, value: 0, block_number: block_past.number)
-    #   insert(:fetched_balance_daily, address_hash: address.hash, value: 0, day: today)
-
-    #   [balance] = Chain.address_to_balances_by_day(address.hash)
-
-    #   assert balance.value == Decimal.new(0)
-    # end
-  end
-
-  describe "transaction_token_transfer_type/1" do
-    test "detects erc721 token transfer" do
-      from_address_hash = "0x7a30272c902563b712245696f0a81c5a0e45ddc8"
-      to_address_hash = "0xb544cead8b660aae9f2e37450f7be2ffbc501793"
-      from_address = insert(:address, hash: from_address_hash)
-      to_address = insert(:address, hash: to_address_hash)
-      block = insert(:block)
-
-      transaction =
-        insert(:transaction,
-          input:
-            "0x23b872dd0000000000000000000000007a30272c902563b712245696f0a81c5a0e45ddc8000000000000000000000000b544cead8b660aae9f2e37450f7be2ffbc5017930000000000000000000000000000000000000000000000000000000000000002",
-          value: Decimal.new(0),
-          created_contract_address_hash: nil
-        )
-        |> with_block(block, status: :ok)
-
-      insert(:token_transfer, from_address: from_address, to_address: to_address, transaction: transaction)
-
-      assert :erc721 = Chain.transaction_token_transfer_type(Repo.preload(transaction, token_transfers: :token))
-    end
-
-    test "detects erc20 token transfer" do
-      from_address_hash = "0x5881fdfE964bE26aC6C8e5153C4ad1c83181C024"
-      to_address_hash = "0xE113127804Ae2383f63Fe8cE31B212D5CB85113d"
-      from_address = insert(:address, hash: from_address_hash)
-      to_address = insert(:address, hash: to_address_hash)
-      block = insert(:block)
-
-      transaction =
-        insert(:transaction,
-          input:
-            "0xa9059cbb000000000000000000000000e113127804ae2383f63fe8ce31b212d5cb85113d0000000000000000000000000000000000000000000001b3093f45ba4dc40000",
-          value: Decimal.new(0),
-          created_contract_address_hash: nil
-        )
-        |> with_block(block, status: :ok)
-
-      insert(:token_transfer,
-        from_address: from_address,
-        to_address: to_address,
-        transaction: transaction,
-        amount: 8_025_000_000_000_000_000_000
-      )
-
-      assert :erc20 = Chain.transaction_token_transfer_type(Repo.preload(transaction, token_transfers: :token))
-    end
-  end
-
-  describe "transaction_to_revert_reason/1" do
-    test "returns correct revert_reason from DB" do
-      # Error("No credit of that type")
-      hex_reason =
-        "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000164e6f20637265646974206f662074686174207479706500000000000000000000"
-
-      transaction = insert(:transaction, revert_reason: hex_reason)
-      assert Chain.transaction_to_revert_reason(transaction) == hex_reason
-    end
-
-    test "returns correct revert_reason from the archive node" do
-      transaction =
-        insert(:transaction,
-          gas: 27319,
-          gas_price: "0x1b31d2900",
-          value: "0x86b3",
-          input: %Data{bytes: <<1>>}
-        )
         |> with_block(insert(:block, number: 1))
 
-      # Error("No credit of that type")
-      hex_reason =
-        "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000164e6f20637265646974206f662074686174207479706500000000000000000000"
+      first_page =
+        insert(
+          :token_transfer,
+          to_address: build(:address),
+          transaction: transaction,
+          token_contract_address: token_contract_address,
+          token: token,
+          token_id: 11
+        )
 
-      expect(
-        EthereumJSONRPC.Mox,
-        :json_rpc,
-        fn
-          [%{method: "debug_traceTransaction"}], _options ->
-            {:ok,
-             [
-               %{
-                 id: 0,
-                 result: %{
-                   "from" => "0x6a17ca3bbf83764791f4a9f2b4dbbaebbc8b3e0d",
-                   "gas" => "0x5208",
-                   "gasUsed" => "0x5208",
-                   "input" => "0x01",
-                   "output" => hex_reason,
-                   "to" => "0x7ed1e469fcb3ee19c0366d829e291451be638e59",
-                   "type" => "CALL",
-                   "value" => "0x86b3"
-                 }
-               }
-             ]}
+      second_page =
+        insert(
+          :token_transfer,
+          to_address: build(:address),
+          transaction: transaction,
+          token_contract_address: token_contract_address,
+          token: token,
+          token_id: 29
+        )
 
-          [%{method: "trace_replayTransaction"}], _options ->
-            {:ok,
-             [
-               %{
-                 id: 0,
-                 result: %{
-                   "output" => "0x",
-                   "stateDiff" => nil,
-                   "trace" => [
-                     %{
-                       "action" => %{
-                         "callType" => "call",
-                         "from" => "0x6a17ca3bbf83764791f4a9f2b4dbbaebbc8b3e0d",
-                         "gas" => "0x5208",
-                         "input" => "0x01",
-                         "to" => "0x7ed1e469fcb3ee19c0366d829e291451be638e59",
-                         "value" => "0x86b3"
-                       },
-                       "error" => "Reverted",
-                       "result" => %{
-                         "gasUsed" => "0x5208",
-                         "output" => hex_reason
-                       },
-                       "subtraces" => 0,
-                       "traceAddress" => [],
-                       "type" => "call"
-                     }
-                   ],
-                   "transactionHash" => "0xdf5574290913659a1ac404ccf2d216c40587f819400a52405b081dda728ac120",
-                   "vmTrace" => nil
-                 }
-               }
-             ]}
+      paging_options = %PagingOptions{key: {first_page.token_id}, page_size: 1}
 
-          %{method: "eth_call"}, _options ->
-            {:error,
-             %{
-               code: 3,
-               data: hex_reason,
-               message: "execution reverted"
-             }}
-        end
-      )
+      unique_tokens_ids_paginated =
+        Chain.address_to_unique_tokens(
+          token_contract_address.hash,
+          paging_options: paging_options
+        )
+        |> Enum.map(& &1.token_id)
 
-      init_config = Application.get_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth)
-      Application.put_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth, tracer: "call_tracer", debug_trace_timeout: "5s")
+      assert unique_tokens_ids_paginated == [second_page.token_id]
+    end
+  end
 
-      assert Chain.transaction_to_revert_reason(transaction) == hex_reason
-
-      assert Transaction.decoded_revert_reason(transaction, hex_reason) == {
-               :ok,
-               "08c379a0",
-               "Error(string reason)",
-               [{"reason", "string", "No credit of that type"}]
-             }
-
-      Application.put_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth, init_config)
+  describe "uncataloged_token_transfer_block_numbers/0" do
+    test "returns a list of block numbers" do
+      log = insert(:token_transfer_log)
+      block_number = log.transaction.block_number
+      assert {:ok, [^block_number]} = Chain.uncataloged_token_transfer_block_numbers()
     end
   end
 end

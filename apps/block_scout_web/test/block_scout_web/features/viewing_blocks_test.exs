@@ -1,6 +1,5 @@
-# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.ViewingBlocksTest do
-  use BlockScoutWeb.FeatureCase, async: false
+  use BlockScoutWeb.FeatureCase, async: true
 
   alias BlockScoutWeb.{BlockListPage, BlockPage}
   alias Explorer.Chain.Block
@@ -60,14 +59,8 @@ defmodule BlockScoutWeb.ViewingBlocksTest do
 
       internal_transaction =
         :internal_transaction_create
-        |> insert(
-          transaction: transaction,
-          transaction_index: transaction.index,
-          index: 0,
-          created_contract_code: contract_address.contract_code,
-          created_contract_address: contract_address,
-          block_number: transaction.block_number
-        )
+        |> insert(transaction: transaction, index: 0)
+        |> with_contract_creation(contract_address)
 
       session
       |> BlockPage.visit_page(block)
@@ -90,8 +83,7 @@ defmodule BlockScoutWeb.ViewingBlocksTest do
         3,
         :token_transfer,
         transaction: transaction,
-        token_contract_address: contract_token_address,
-        block: block
+        token_contract_address: contract_token_address
       )
 
       session
@@ -157,8 +149,9 @@ defmodule BlockScoutWeb.ViewingBlocksTest do
           uncle = insert(:block, consensus: false)
           insert(:block_second_degree_relation, uncle_hash: uncle.hash)
 
-          transaction = insert(:transaction)
-          insert(:transaction_fork, hash: transaction.hash, uncle_hash: uncle.hash)
+          :transaction
+          |> insert()
+          |> with_block(uncle)
 
           uncle
         end
@@ -175,14 +168,23 @@ defmodule BlockScoutWeb.ViewingBlocksTest do
   end
 
   describe "viewing reorg blocks list" do
-    test "lists uncle blocks", %{session: session} do
-      [reorg | _] = blocks = insert_list(10, :block, consensus: false)
-      Enum.each(blocks, fn b -> insert(:block, number: b.number, consensus: true) end)
+    test "lists reorg blocks", %{session: session} do
+      [reorg | _] = insert_list(10, :block, consensus: false)
 
       session
       |> BlockListPage.visit_reorgs_page()
       |> assert_has(BlockListPage.block(reorg))
       |> assert_has(BlockListPage.blocks(10))
+    end
+
+    test "does not list consensus blocks", %{session: session} do
+      consensus_block = insert(:block, consensus: true)
+      [reorg | _] = insert_list(10, :block, consensus: false)
+
+      session
+      |> BlockListPage.visit_reorgs_page()
+      |> assert_has(BlockListPage.block(reorg))
+      |> refute_has(BlockListPage.block(consensus_block))
     end
   end
 end
