@@ -19,6 +19,8 @@
 
 ### 🐛 Bug Fixes
 
+- Eliminate mostly Logger.configure; Make debug logging on failed tx decoding ([#14601](https://github.com/blockscout/blockscout/pull/14601))
+- Handle incorrect number of top-level calls ([#14600](https://github.com/blockscout/blockscout/pull/14600))
 - Re-run handle_partially_imported_blocks on error ([#14597](https://github.com/blockscout/blockscout/issues/14597))
 - Apply ZRC-2 token_type condition only for zilliqa ([#14585](https://github.com/blockscout/blockscout/issues/14585))
 - Use struct field access for token balance broadcast filter ([#14568](https://github.com/blockscout/blockscout/issues/14568))
@@ -40,7 +42,7 @@
 
 - Use Repo.replica as a default repo for transaction preload ([#14591](https://github.com/blockscout/blockscout/issues/14591))
 - Differentiate blocks count event by type ([#14573](https://github.com/blockscout/blockscout/issues/14573))
-- Add availability to bradcast blocks count instead of full block ([#14571](https://github.com/blockscout/blockscout/issues/14571))
+- Add availability to broadcast blocks count instead of full block ([#14571](https://github.com/blockscout/blockscout/issues/14571))
 
 ## 11.2.2
 
