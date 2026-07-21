@@ -43,7 +43,4 @@ window.Swal = swal
 
 // Initialize Vercel Web Analytics
 import { inject } from '@vercel/analytics'
-inject({
-  mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
-  debug: process.env.NODE_ENV !== 'production'
-})
+inject()
