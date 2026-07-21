@@ -101,6 +101,19 @@ defmodule BlockScoutWeb.ViewingTransactionsTest do
       |> assert_has(TransactionListPage.contract_creation(transaction))
     end
 
+    test "transaction tile displays the block number it was collated into", %{session: session} do
+      block = insert(:block, number: 999)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      session
+      |> TransactionListPage.visit_page()
+      |> assert_has(TransactionListPage.transaction_block_number(transaction, 999))
+    end
+
     test "live update replaces reorg transaction", %{session: session} do
       block = insert(:block, number: 10)
       transaction =
@@ -115,15 +128,6 @@ defmodule BlockScoutWeb.ViewingTransactionsTest do
       Notifier.handle_event({:chain_event, :transactions, [%{transaction | block_number: 11}]})
 
       assert_has(session, TransactionListPage.transaction_block_number(transaction, 11))
-    end
-
-    test "shows the block number for a transaction already rendered on the list", %{
-      session: session,
-      transaction: transaction
-    } do
-      session
-      |> TransactionListPage.visit_page()
-      |> assert_has(TransactionListPage.transaction_block_number(transaction, transaction.block_number))
     end
   end
 

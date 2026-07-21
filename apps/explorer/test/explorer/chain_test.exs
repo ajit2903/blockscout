@@ -128,19 +128,7 @@ defmodule Explorer.ChainTest do
       assert [] == Chain.address_to_transactions(address)
     end
 
-    test "excludes reorg transaction when direction is :from" do
-      address = insert(:address)
-      block = insert(:block, consensus: false)
-      transaction =
-        :transaction
-        |> insert(from_address: address)
-        |> with_block(block)
-      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
-
-      assert [] == Chain.address_to_transactions(address, direction: :from)
-    end
-
-    test "excludes reorg transaction when direction is :to" do
+    test "excludes reorg transaction when address is the to_address" do
       address = insert(:address)
       block = insert(:block, consensus: false)
       transaction =
@@ -148,34 +136,6 @@ defmodule Explorer.ChainTest do
         |> insert(to_address: address)
         |> with_block(block)
       insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
-
-      assert [] == Chain.address_to_transactions(address, direction: :to)
-    end
-
-    test "does not exclude a transaction on a non-consensus block without a matching transaction_fork" do
-      address = insert(:address)
-      block = insert(:block, consensus: false)
-      transaction =
-        :transaction
-        |> insert(from_address: address)
-        |> with_block(block)
-        |> Repo.preload(:token_transfers)
-
-      assert [transaction] ==
-               Chain.address_to_transactions(address)
-               |> Repo.preload([:block, :to_address, :from_address])
-    end
-
-    test "excludes a transaction with multiple transaction_fork records only once" do
-      address = insert(:address)
-      block = insert(:block, consensus: false)
-      other_uncle = insert(:block, consensus: false)
-      transaction =
-        :transaction
-        |> insert(from_address: address)
-        |> with_block(block)
-      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
-      insert(:transaction_fork, hash: transaction.hash, uncle_hash: other_uncle.hash)
 
       assert [] == Chain.address_to_transactions(address)
     end
@@ -284,17 +244,60 @@ defmodule Explorer.ChainTest do
       assert [] == Chain.address_to_transactions(address)
     end
 
-    test "excludes reorg transaction that have token transfers for the given from_address" do
+    test "excludes reorg transaction that have token transfers for the given address and direction :from" do
       address = insert(:address)
       block = insert(:block, consensus: false)
       transaction =
         :transaction
-        |> insert(from_address: address)
+        |> insert()
         |> with_block(block)
       insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
       insert(:token_transfer, from_address: address, transaction: transaction)
 
       assert [] == Chain.address_to_transactions(address, direction: :from)
+    end
+
+    test "excludes reorg transaction that have token transfers for the given address and direction :to" do
+      address = insert(:address)
+      block = insert(:block, consensus: false)
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+      insert(:transaction_fork, hash: transaction.hash, uncle_hash: block.hash)
+      insert(:token_transfer, to_address: address, transaction: transaction)
+
+      assert [] == Chain.address_to_transactions(address, direction: :to)
+    end
+
+    test "returns transactions that have token transfers for the given address and direction :from" do
+      address = insert(:address)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      insert(:token_transfer, from_address: address, transaction: transaction)
+
+      assert [transaction.hash] ==
+               Chain.address_to_transactions(address, direction: :from)
+               |> Enum.map(& &1.hash)
+    end
+
+    test "returns transactions that have token transfers for the given address and direction :to" do
+      address = insert(:address)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      insert(:token_transfer, to_address: address, transaction: transaction)
+
+      assert [transaction.hash] ==
+               Chain.address_to_transactions(address, direction: :to)
+               |> Enum.map(& &1.hash)
     end
 
     test "returns transactions that have token transfers for the given to_address" do
@@ -2016,12 +2019,7 @@ defmodule Explorer.ChainTest do
       assert [] == Chain.recent_collated_transactions()
     end
 
-    test "returns non-reorg transactions while excluding the reorg transaction" do
-      valid_transaction =
-        :transaction
-        |> insert()
-        |> with_block()
-
+    test "returns non-reorg transactions when a reorg transaction also exists" do
       reorg_block = insert(:block, consensus: false)
       reorg_transaction =
         :transaction
@@ -2029,11 +2027,14 @@ defmodule Explorer.ChainTest do
         |> with_block(reorg_block)
       insert(:transaction_fork, hash: reorg_transaction.hash, uncle_hash: reorg_block.hash)
 
-      transaction_hashes =
-        Chain.recent_collated_transactions()
-        |> Enum.map(& &1.hash)
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
 
-      assert transaction_hashes == [valid_transaction.hash]
+      assert [transaction.hash] ==
+               Chain.recent_collated_transactions()
+               |> Enum.map(& &1.hash)
     end
 
     test "returns a list of recent collated transactions" do

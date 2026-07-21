@@ -177,14 +177,16 @@ defmodule BlockScoutWeb.ViewingBlocksTest do
       |> assert_has(BlockListPage.blocks(10))
     end
 
-    test "does not list consensus blocks", %{session: session} do
-      consensus_block = insert(:block, consensus: true)
-      [reorg | _] = insert_list(10, :block, consensus: false)
+    test "does not list uncle blocks as reorgs", %{session: session} do
+      uncle = insert(:block, consensus: false)
+      insert(:block_second_degree_relation, uncle_hash: uncle.hash)
+
+      [reorg | _] = insert_list(2, :block, consensus: false)
 
       session
       |> BlockListPage.visit_reorgs_page()
       |> assert_has(BlockListPage.block(reorg))
-      |> refute_has(BlockListPage.block(consensus_block))
+      |> refute_has(BlockListPage.block(uncle))
     end
   end
 end

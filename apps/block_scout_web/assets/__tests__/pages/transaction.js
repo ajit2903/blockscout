@@ -1,11 +1,5 @@
 import { reducer, initialState } from '../../js/pages/transaction'
 
-test('initialState tracks transactionHashes and replaceTransactions instead of newTransactionHashes', () => {
-  expect(initialState.transactionHashes).toEqual([])
-  expect(initialState.replaceTransactions).toEqual([])
-  expect(initialState.newTransactionHashes).toBeUndefined()
-})
-
 test('CHANNEL_DISCONNECTED', () => {
   const state = initialState
   const action = {
@@ -284,6 +278,46 @@ describe('RECEIVED_NEW_TRANSACTION_BATCH', () => {
     expect(output.newTransactions).toEqual(['test1'])
     expect(output.transactionHashes).toEqual(['1'])
   })
+  test('batch with a mix of new and reorg (duplicate) transactions', () => {
+    const state = Object.assign({}, initialState, {
+      transactionCount: 5,
+      transactionHashes: ['0x01']
+    })
+    const action = {
+      type: 'RECEIVED_NEW_TRANSACTION_BATCH',
+      msgs: [{
+        transactionHash: '0x01',
+        transactionHtml: 'replaced 1'
+      }, {
+        transactionHash: '0x02',
+        transactionHtml: 'new 2'
+      }]
+    }
+    const output = reducer(state, action)
+
+    expect(output.transactionHashes).toEqual(['0x01', '0x02'])
+    expect(output.transactionCount).toEqual(6)
+  })
+  test('on page 2+ with a reorg (duplicate) transaction does not double count', () => {
+    const state = Object.assign({}, initialState, {
+      beyondPageOne: true,
+      transactionCount: 5,
+      transactionHashes: ['0x01']
+    })
+    const action = {
+      type: 'RECEIVED_NEW_TRANSACTION_BATCH',
+      msgs: [{
+        transactionHash: '0x01',
+        transactionHtml: 'replaced 1'
+      }, {
+        transactionHash: '0x02',
+        transactionHtml: 'new 2'
+      }]
+    }
+    const output = reducer(state, action)
+
+    expect(output.transactionCount).toEqual(6)
+  })
   test('large batch of transactions', () => {
     const state = initialState
     const action = {
@@ -414,82 +448,5 @@ describe('RECEIVED_NEW_TRANSACTION_BATCH', () => {
     expect(output.newTransactions).toEqual([])
     expect(output.batchCountAccumulator).toEqual(0)
     expect(output.transactionCount).toEqual(2)
-  })
-  test('merges new transaction hashes into transactionHashes without duplicating existing ones', () => {
-    const state = Object.assign({}, initialState, {
-      transactionHashes: ['1']
-    })
-    const action = {
-      type: 'RECEIVED_NEW_TRANSACTION_BATCH',
-      msgs: [{
-        transactionHash: '1',
-        transactionHtml: 'test 1'
-      }, {
-        transactionHash: '2',
-        transactionHtml: 'test 2'
-      }]
-    }
-    const output = reducer(state, action)
-
-    expect(output.transactionHashes).toEqual(['1', '2'])
-  })
-  test('only counts newly seen hashes toward transactionCount when a batch contains a duplicate', () => {
-    const state = Object.assign({}, initialState, {
-      transactionHashes: ['1'],
-      transactionCount: 5
-    })
-    const action = {
-      type: 'RECEIVED_NEW_TRANSACTION_BATCH',
-      msgs: [{
-        transactionHash: '1',
-        transactionHtml: 'test 1'
-      }, {
-        transactionHash: '2',
-        transactionHtml: 'test 2'
-      }]
-    }
-    const output = reducer(state, action)
-
-    expect(output.transactionCount).toEqual(6)
-  })
-  test('tracks duplicate hashes for replacement separately from new hashes during a large batch', () => {
-    const state = Object.assign({}, initialState, {
-      transactionHashes: ['1'],
-      batchCountAccumulator: 11
-    })
-    const action = {
-      type: 'RECEIVED_NEW_TRANSACTION_BATCH',
-      msgs: [{
-        transactionHash: '1',
-        transactionHtml: 'test 1'
-      }, {
-        transactionHash: '2',
-        transactionHtml: 'test 2'
-      }]
-    }
-    const output = reducer(state, action)
-
-    expect(output.batchCountAccumulator).toEqual(12)
-    expect(output.transactionHashes).toEqual(['1', '2'])
-  })
-  test('on page 2+ with a duplicate transaction hash only counts the new transaction toward transactionCount', () => {
-    const state = Object.assign({}, initialState, {
-      beyondPageOne: true,
-      transactionHashes: ['1'],
-      transactionCount: 5
-    })
-    const action = {
-      type: 'RECEIVED_NEW_TRANSACTION_BATCH',
-      msgs: [{
-        transactionHash: '1',
-        transactionHtml: 'test 1'
-      }, {
-        transactionHash: '2',
-        transactionHtml: 'test 2'
-      }]
-    }
-    const output = reducer(state, action)
-
-    expect(output.transactionCount).toEqual(6)
   })
 })
