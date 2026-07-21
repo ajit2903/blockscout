@@ -1,18 +1,15 @@
-# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.TokenTransferTest do
   use Explorer.DataCase
 
-  use Utils.CompileTimeEnvHelper,
-    chain_identity: [:explorer, :chain_identity]
-
+  import Ecto.Query
   import Explorer.Factory
 
-  alias Explorer.PagingOptions
-  alias Explorer.Chain.TokenTransfer
+  alias Explorer.{PagingOptions, Repo}
+  alias Explorer.Chain.{Transaction, TokenTransfer}
 
   doctest Explorer.Chain.TokenTransfer
 
-  describe "fetch_token_transfers_from_token_hash/2" do
+  describe "fetch_token_transfers/2" do
     test "returns token transfers for the given address" do
       token_contract_address = insert(:contract_address)
 
@@ -54,15 +51,12 @@ defmodule Explorer.Chain.TokenTransferTest do
         token: token
       )
 
-      transfers_primary_keys =
+      transfers_ids =
         token_contract_address.hash
         |> TokenTransfer.fetch_token_transfers_from_token_hash([])
-        |> Enum.map(&{&1.transaction_hash, &1.log_index})
+        |> Enum.map(& &1.id)
 
-      assert transfers_primary_keys == [
-               {another_transfer.transaction_hash, another_transfer.log_index},
-               {token_transfer.transaction_hash, token_transfer.log_index}
-             ]
+      assert transfers_ids == [another_transfer.id, token_transfer.id]
     end
 
     test "when there isn't token transfers won't show anything" do
@@ -91,7 +85,6 @@ defmodule Explorer.Chain.TokenTransferTest do
       second_page =
         insert(
           :token_transfer,
-          block_number: 999,
           to_address: build(:address),
           transaction: transaction,
           token_contract_address: token_contract_address,
@@ -101,341 +94,254 @@ defmodule Explorer.Chain.TokenTransferTest do
       first_page =
         insert(
           :token_transfer,
-          block_number: 1000,
           to_address: build(:address),
           transaction: transaction,
           token_contract_address: token_contract_address,
           token: token
         )
 
-      paging_options = %PagingOptions{key: {first_page.block_number, first_page.log_index}, page_size: 1}
+      paging_options = %PagingOptions{key: first_page.inserted_at, page_size: 1}
 
-      token_transfers_primary_keys_paginated =
-        token_contract_address.hash
-        |> TokenTransfer.fetch_token_transfers_from_token_hash(paging_options: paging_options)
-        |> Enum.map(&{&1.transaction_hash, &1.log_index})
+      token_transfers_ids_paginated =
+        TokenTransfer.fetch_token_transfers_from_token_hash(
+          token_contract_address.hash,
+          paging_options: paging_options
+        )
+        |> Enum.map(& &1.id)
 
-      assert token_transfers_primary_keys_paginated == [{second_page.transaction_hash, second_page.log_index}]
+      assert token_transfers_ids_paginated == [second_page.id]
     end
+  end
 
-    test "paginates considering the log_index when there are repeated block numbers" do
+  describe "count_token_transfers/0" do
+    test "returns token transfers grouped by tokens" do
       token_contract_address = insert(:contract_address)
+      token = insert(:token, contract_address: token_contract_address)
 
       transaction =
         :transaction
         |> insert()
         |> with_block()
 
-      token = insert(:token)
+      insert(
+        :token_transfer,
+        to_address: build(:address),
+        transaction: transaction,
+        token_contract_address: token_contract_address,
+        token: token
+      )
 
-      token_transfer =
+      insert(
+        :token_transfer,
+        to_address: build(:address),
+        transaction: transaction,
+        token_contract_address: token_contract_address,
+        token: token
+      )
+
+      results = TokenTransfer.count_token_transfers()
+
+      assert length(results) == 1
+      assert List.first(results) == {token.contract_address_hash, 2}
+    end
+  end
+
+  describe "address_to_unique_tokens/2" do
+    test "returns list of unique tokens for a token contract" do
+      token_contract_address = insert(:contract_address)
+      token = insert(:token, contract_address: token_contract_address, type: "ERC-721")
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(insert(:block, number: 1))
+
+      insert(
+        :token_transfer,
+        to_address: build(:address),
+        transaction: transaction,
+        token_contract_address: token_contract_address,
+        token: token,
+        token_id: 42
+      )
+
+      another_transaction =
+        :transaction
+        |> insert()
+        |> with_block(insert(:block, number: 2))
+
+      last_owner =
         insert(
           :token_transfer,
-          block_number: 1000,
-          log_index: 0,
           to_address: build(:address),
-          transaction: transaction,
+          transaction: another_transaction,
           token_contract_address: token_contract_address,
-          token: token
+          token: token,
+          token_id: 42
         )
 
-      paging_options = %PagingOptions{key: {token_transfer.block_number, token_transfer.log_index + 1}, page_size: 1}
-
-      token_transfers_primary_keys_paginated =
+      results =
         token_contract_address.hash
-        |> TokenTransfer.fetch_token_transfers_from_token_hash(paging_options: paging_options)
-        |> Enum.map(&{&1.transaction_hash, &1.log_index})
+        |> TokenTransfer.address_to_unique_tokens()
+        |> Repo.all()
 
-      assert token_transfers_primary_keys_paginated == [{token_transfer.transaction_hash, token_transfer.log_index}]
+      assert Enum.map(results, & &1.token_id) == [last_owner.token_id]
+      assert Enum.map(results, & &1.to_address_hash) == [last_owner.to_address_hash]
     end
-  end
 
-  describe "where_any_address_fields_match/3" do
-    test "when to_address_hash match returns transactions hashes list" do
-      john = insert(:address)
-      paul = insert(:address)
-      contract_address = insert(:contract_address)
+    test "won't return tokens that aren't uniques" do
+      token_contract_address = insert(:contract_address)
+      token = insert(:token, contract_address: token_contract_address, type: "ERC-20")
 
       transaction =
         :transaction
-        |> insert(
-          from_address: john,
-          from_address_hash: john.hash,
-          to_address: contract_address,
-          to_address_hash: contract_address.hash
-        )
-        |> with_block()
+        |> insert()
+        |> with_block(insert(:block, number: 1))
 
       insert(
         :token_transfer,
-        from_address: john,
-        to_address: paul,
+        to_address: build(:address),
         transaction: transaction,
-        amount: 1
+        token_contract_address: token_contract_address,
+        token: token
       )
 
-      insert(
-        :token_transfer,
-        from_address: john,
-        to_address: paul,
-        transaction: transaction,
-        amount: 1
-      )
+      results =
+        token_contract_address.hash
+        |> TokenTransfer.address_to_unique_tokens()
+        |> Repo.all()
 
-      {:ok, transaction_bytes} = Explorer.Chain.Hash.Full.dump(transaction.hash)
-
-      transactions_hashes = TokenTransfer.where_any_address_fields_match(:to, paul.hash, %PagingOptions{page_size: 1})
-
-      assert Enum.member?(transactions_hashes, transaction_bytes) == true
-    end
-
-    test "when from_address_hash match returns transactions hashes list" do
-      john = insert(:address)
-      paul = insert(:address)
-      contract_address = insert(:contract_address)
-
-      transaction =
-        :transaction
-        |> insert(
-          from_address: john,
-          from_address_hash: john.hash,
-          to_address: contract_address,
-          to_address_hash: contract_address.hash
-        )
-        |> with_block()
-
-      insert(
-        :token_transfer,
-        from_address: john,
-        to_address: paul,
-        transaction: transaction,
-        amount: 1
-      )
-
-      insert(
-        :token_transfer,
-        from_address: john,
-        to_address: paul,
-        transaction: transaction,
-        amount: 1
-      )
-
-      {:ok, transaction_bytes} = Explorer.Chain.Hash.Full.dump(transaction.hash)
-
-      transactions_hashes = TokenTransfer.where_any_address_fields_match(:from, john.hash, %PagingOptions{page_size: 1})
-
-      assert Enum.member?(transactions_hashes, transaction_bytes) == true
-    end
-
-    test "when to_from_address_hash or from_address_hash match returns transactions hashes list" do
-      john = insert(:address)
-      paul = insert(:address)
-      contract_address = insert(:contract_address)
-
-      transaction_one =
-        :transaction
-        |> insert(
-          from_address: john,
-          from_address_hash: john.hash,
-          to_address: contract_address,
-          to_address_hash: contract_address.hash
-        )
-        |> with_block()
-
-      insert(
-        :token_transfer,
-        from_address: john,
-        to_address: paul,
-        transaction: transaction_one,
-        amount: 1
-      )
-
-      transaction_two =
-        :transaction
-        |> insert(
-          from_address: john,
-          from_address_hash: john.hash,
-          to_address: contract_address,
-          to_address_hash: contract_address.hash
-        )
-        |> with_block()
-
-      insert(
-        :token_transfer,
-        from_address: paul,
-        to_address: john,
-        transaction: transaction_two,
-        amount: 1
-      )
-
-      {:ok, transaction_one_bytes} = Explorer.Chain.Hash.Full.dump(transaction_one.hash)
-      {:ok, transaction_two_bytes} = Explorer.Chain.Hash.Full.dump(transaction_two.hash)
-
-      transactions_hashes = TokenTransfer.where_any_address_fields_match(nil, john.hash, %PagingOptions{page_size: 2})
-
-      assert Enum.member?(transactions_hashes, transaction_one_bytes) == true
-      assert Enum.member?(transactions_hashes, transaction_two_bytes) == true
-    end
-
-    test "paginates result from to_from_address_hash and from_address_hash match" do
-      john = insert(:address)
-      paul = insert(:address)
-      contract_address = insert(:contract_address)
-
-      transaction_one =
-        :transaction
-        |> insert(
-          from_address: paul,
-          from_address_hash: paul.hash,
-          to_address: contract_address,
-          to_address_hash: contract_address.hash
-        )
-        |> with_block(number: 1)
-
-      insert(
-        :token_transfer,
-        from_address: john,
-        to_address: paul,
-        transaction: transaction_one,
-        amount: 1
-      )
-
-      transaction_two =
-        :transaction
-        |> insert(
-          from_address: paul,
-          from_address_hash: paul.hash,
-          to_address: contract_address,
-          to_address_hash: contract_address.hash
-        )
-        |> with_block(number: 2)
-
-      insert(
-        :token_transfer,
-        from_address: paul,
-        to_address: john,
-        transaction: transaction_two,
-        amount: 1
-      )
-
-      {:ok, transaction_one_bytes} = Explorer.Chain.Hash.Full.dump(transaction_one.hash)
-
-      page_two =
-        TokenTransfer.where_any_address_fields_match(nil, john.hash, %PagingOptions{
-          page_size: 1,
-          key: {transaction_two.block_number, transaction_two.index}
-        })
-
-      assert Enum.member?(page_two, transaction_one_bytes) == true
+      assert results == []
     end
   end
 
-  describe "uncataloged_token_transfer_block_numbers/0" do
-    test "returns a list of block numbers" do
-      block = insert(:block)
+  describe "where_address_fields_match/3" do
+    # `Chain.address_to_transactions/2` composes this query on top of a query that already left joins the
+    # transaction's `forks` association (to filter out reorg transactions), shifting the query's bindings to
+    # `[transaction, fork]`. `where_address_fields_match/3` must join `token_transfers` relative to the
+    # `transaction` binding regardless of what other bindings precede it.
+    defp transaction_with_fork_join do
+      Transaction
+      |> join(:left, [transaction], fork in assoc(transaction, :forks))
+    end
+
+    test "with :from, matches transactions with a token transfer from the given address" do
       address = insert(:address)
 
-      log =
-        insert(:token_transfer_log,
-          transaction:
-            insert(:transaction,
-              block_number: block.number,
-              block_hash: block.hash,
-              cumulative_gas_used: 0,
-              gas_used: 0,
-              index: 0
-            ),
-          block: block,
-          address_hash: address.hash,
-          address: address
-        )
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
 
-      block_number = log.block_number
-      assert {:ok, [^block_number]} = TokenTransfer.uncataloged_token_transfer_block_numbers()
-    end
-  end
+      insert(:token_transfer, from_address: address, transaction: transaction)
 
-  if @chain_identity == {:optimism, :celo} do
-    test "returns block numbers for Celo epoch blocks with nil transaction_hash" do
-      log =
-        insert(:token_transfer_log,
-          transaction: nil,
-          transaction_hash: nil
-        )
+      other_transaction =
+        :transaction
+        |> insert()
+        |> with_block()
 
-      block_number = log.block_number
-      assert {:ok, [^block_number]} = TokenTransfer.uncataloged_token_transfer_block_numbers()
+      insert(:token_transfer, to_address: address, transaction: other_transaction)
+
+      result =
+        transaction_with_fork_join()
+        |> TokenTransfer.where_address_fields_match(address.hash, :from)
+        |> Repo.all()
+        |> Enum.map(& &1.hash)
+        |> Enum.uniq()
+
+      assert result == [transaction.hash]
     end
 
-    test "does not return block numbers when matching token transfer exists for Celo epoch blocks" do
-      log =
-        insert(:token_transfer_log,
-          transaction: nil,
-          transaction_hash: nil
-        )
+    test "with :to, matches transactions with a token transfer to the given address" do
+      address = insert(:address)
 
-      from_address_hash =
-        log.second_topic
-        |> to_string()
-        |> String.replace_prefix("0x000000000000000000000000", "0x")
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block()
 
-      to_address_hash =
-        log.third_topic
-        |> to_string()
-        |> String.replace_prefix("0x000000000000000000000000", "0x")
+      insert(:token_transfer, to_address: address, transaction: transaction)
 
-      token_contract_address = log.address
-      to_address = insert(:address, hash: to_address_hash)
-      from_address = insert(:address, hash: from_address_hash)
+      other_transaction =
+        :transaction
+        |> insert()
+        |> with_block()
 
-      insert(:token_transfer,
-        transaction: nil,
-        transaction_hash: nil,
-        block: log.block,
-        log_index: log.index,
-        token_contract_address: token_contract_address,
-        from_address: from_address,
-        to_address: to_address
-      )
+      insert(:token_transfer, from_address: address, transaction: other_transaction)
 
-      assert {:ok, []} = TokenTransfer.uncataloged_token_transfer_block_numbers()
+      result =
+        transaction_with_fork_join()
+        |> TokenTransfer.where_address_fields_match(address.hash, :to)
+        |> Repo.all()
+        |> Enum.map(& &1.hash)
+        |> Enum.uniq()
+
+      assert result == [transaction.hash]
     end
-  end
 
-  describe "ERC-7984 token transfers" do
-    test "filters ERC-7984 token transfers correctly" do
-      erc7984_token = insert(:token, type: "ERC-7984")
-      erc20_token = insert(:token, type: "ERC-20")
+    test "with no direction, matches transactions with a token transfer to or from the given address" do
+      address = insert(:address)
 
-      transaction = insert(:transaction) |> with_block()
+      from_transaction =
+        :transaction
+        |> insert()
+        |> with_block()
 
-      erc7984_transfer =
-        insert(
-          :token_transfer,
-          token_type: "ERC-7984",
-          amount: nil,
-          token_ids: nil,
-          token: erc7984_token,
-          token_contract_address: erc7984_token.contract_address,
-          transaction: transaction
-        )
+      insert(:token_transfer, from_address: address, transaction: from_transaction)
 
-      _erc20_transfer =
-        insert(
-          :token_transfer,
-          token_type: "ERC-20",
-          token: erc20_token,
-          token_contract_address: erc20_token.contract_address,
-          transaction: transaction
-        )
+      to_transaction =
+        :transaction
+        |> insert()
+        |> with_block()
 
-      # Test that ERC-7984 transfers can be queried
-      transfers = TokenTransfer.fetch_token_transfers_from_token_hash(erc7984_token.contract_address_hash, [])
+      insert(:token_transfer, to_address: address, transaction: to_transaction)
 
-      assert length(transfers) == 1
-      assert hd(transfers).token_type == "ERC-7984"
-      assert hd(transfers).amount == nil
-      assert hd(transfers).token_ids == nil
+      unrelated_transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      insert(:token_transfer, transaction: unrelated_transaction)
+
+      result =
+        transaction_with_fork_join()
+        |> TokenTransfer.where_address_fields_match(address.hash, nil)
+        |> Repo.all()
+        |> Enum.map(& &1.hash)
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      assert result == Enum.sort([from_transaction.hash, to_transaction.hash])
+    end
+
+    test "is compatible with a preceding filter on the transaction's forks association" do
+      address = insert(:address)
+      reorg_block = insert(:block, consensus: false)
+
+      reorg_transaction =
+        :transaction
+        |> insert()
+        |> with_block(reorg_block)
+
+      insert(:transaction_fork, hash: reorg_transaction.hash, uncle_hash: reorg_block.hash)
+      insert(:token_transfer, to_address: address, transaction: reorg_transaction)
+
+      valid_transaction =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      insert(:token_transfer, to_address: address, transaction: valid_transaction)
+
+      result =
+        Transaction
+        |> join(:left, [transaction], fork in assoc(transaction, :forks))
+        |> where([_transaction, fork], is_nil(fork.uncle_hash))
+        |> TokenTransfer.where_address_fields_match(address.hash, :to)
+        |> Repo.all()
+        |> Enum.map(& &1.hash)
+
+      assert result == [valid_transaction.hash]
     end
   end
 end
