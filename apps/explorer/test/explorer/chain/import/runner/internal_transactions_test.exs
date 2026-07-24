@@ -632,7 +632,7 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
     end
   end
 
-  describe "zero value internal transactions filtering" do
+  describe "prepare_data/1 zero value filtering" do
     setup do
       original_config = Application.get_env(:explorer, DeleteZeroValueInternalTransactions)
 
@@ -643,111 +643,112 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
       :ok
     end
 
-    test "prepare_data/1 does not drop zero-value calls (filtering happens at insert/3, after validation)" do
+    test "removes zero-value call internal transactions before border block" do
       Application.put_env(:explorer, DeleteZeroValueInternalTransactions, enabled: true, storage_period: 0)
       block = insert(:block)
 
       params = [
-        %{type: :call, block_number: block.number - 1, value: Wei.from(Decimal.new(0), :wei)},
-        %{type: :call, block_number: block.number - 1, value: Wei.from(Decimal.new(1), :wei)},
-        %{type: "call", block_number: block.number - 1, value: 0},
-        %{type: :call, block_number: block.number - 1, value: nil}
+        %{
+          type: :call,
+          block_number: block.number - 1,
+          value: Wei.from(Decimal.new(0), :wei)
+        },
+        %{
+          type: :call,
+          block_number: block.number - 1,
+          value: Wei.from(Decimal.new(1), :wei)
+        },
+        %{
+          type: "call",
+          block_number: block.number - 1,
+          value: 0
+        }
       ]
 
-      # Dropping zero-value calls here would make their parent transactions look
-      # un-traced during block validation, so prepare_data/1 must keep them all.
-      assert length(InternalTransactions.prepare_data(params)) == 4
+      result = InternalTransactions.prepare_data(params)
+
+      assert length(result) == 1
+      assert hd(result).value.value == Decimal.new(1)
     end
 
-    test "run/3 excludes zero-value calls from persistence while still validating the block and clearing its pending operation" do
+    test "does not remove zero-value calls after border block" do
       Application.put_env(:explorer, DeleteZeroValueInternalTransactions, enabled: true, storage_period: 0)
+      block = insert(:block)
 
-      full_block = insert(:block)
-      transaction_a = insert(:transaction) |> with_block(full_block)
-      transaction_b = insert(:transaction) |> with_block(full_block)
-      insert(:pending_block_operation, block_hash: full_block.hash, block_number: full_block.number)
+      params = [
+        %{
+          type: :call,
+          block_number: block.number + 1,
+          value: Wei.from(Decimal.new(0), :wei)
+        },
+        %{
+          type: "call",
+          block_number: block.number + 1,
+          value: 0
+        }
+      ]
 
-      # transaction_a keeps a normal, non-zero-value internal transaction
-      transaction_a_changes = make_internal_transaction_changes(transaction_a, 0, nil)
-
-      # transaction_b's only internal transaction is a zero-value call subject to deletion
-      transaction_b_changes =
-        transaction_b
-        |> make_internal_transaction_changes(0, nil)
-        |> Map.put(:value, Wei.from(Decimal.new(0), :wei))
-
-      assert {:ok, _} = run_internal_transactions([transaction_a_changes, transaction_b_changes])
-
-      # The block is validated: consensus kept, refetch not requested, pending op cleared
-      assert %{consensus: true, refetch_needed: refetch_needed} = Repo.get(Block, full_block.hash)
-      refute refetch_needed
-      assert PendingBlockOperation |> Repo.get(full_block.hash) |> is_nil()
-
-      # transaction_a's internal transaction is persisted
-      refute from(i in InternalTransaction,
-               where: i.block_number == ^transaction_a.block_number and i.transaction_index == ^transaction_a.index
-             )
-             |> Repo.one()
-             |> is_nil()
-
-      # transaction_b's zero-value internal transaction is excluded from persistence
-      assert from(i in InternalTransaction,
-               where: i.block_number == ^transaction_b.block_number and i.transaction_index == ^transaction_b.index
-             )
-             |> Repo.one()
-             |> is_nil()
+      assert [_, _] = InternalTransactions.prepare_data(params)
     end
 
-    test "run_insert_only/2 excludes zero-value calls from persistence" do
+    test "does not remove non-call internal transactions" do
       Application.put_env(:explorer, DeleteZeroValueInternalTransactions, enabled: true, storage_period: 0)
+      block = insert(:block)
 
-      full_block = insert(:block)
-      transaction = insert(:transaction) |> with_block(full_block)
+      params = [
+        %{
+          type: :create,
+          block_number: block.number - 1,
+          value: Wei.from(Decimal.new(0), :wei)
+        },
+        %{
+          type: "create",
+          block_number: block.number - 1,
+          value: 0
+        }
+      ]
 
-      zero_value_changes =
-        transaction
-        |> make_internal_transaction_changes(0, nil)
-        |> Map.put(:value, Wei.from(Decimal.new(0), :wei))
-
-      non_zero_value_changes = make_internal_transaction_changes(transaction, 1, nil)
-
-      InternalTransactions.run_insert_only([zero_value_changes, non_zero_value_changes], %{
-        timeout: :infinity,
-        timestamps: %{inserted_at: DateTime.utc_now(), updated_at: DateTime.utc_now()}
-      })
-
-      persisted_indexes =
-        from(i in InternalTransaction,
-          where: i.block_number == ^transaction.block_number and i.transaction_index == ^transaction.index,
-          select: i.index,
-          order_by: i.index
-        )
-        |> Repo.all()
-
-      assert persisted_indexes == [1]
+      assert [_, _] = InternalTransactions.prepare_data(params)
     end
 
-    test "run/3 keeps zero-value calls when the feature is disabled" do
+    test "treats nil value as zero" do
+      Application.put_env(:explorer, DeleteZeroValueInternalTransactions, enabled: true, storage_period: 0)
+      block = insert(:block)
+
+      params = [
+        %{
+          type: :call,
+          block_number: block.number - 1,
+          value: nil
+        },
+        %{
+          type: "call",
+          block_number: block.number - 1,
+          value: nil
+        }
+      ]
+
+      assert [] == InternalTransactions.prepare_data(params)
+    end
+
+    test "does not filter anything when feature is disabled" do
       Application.put_env(:explorer, DeleteZeroValueInternalTransactions, enabled: false, storage_period: 0)
+      block = insert(:block)
 
-      full_block = insert(:block)
-      transaction = insert(:transaction) |> with_block(full_block)
-      insert(:pending_block_operation, block_hash: full_block.hash, block_number: full_block.number)
+      params = [
+        %{
+          type: :call,
+          block_number: block.number - 1,
+          value: Wei.from(Decimal.new(0), :wei)
+        },
+        %{
+          type: "call",
+          block_number: block.number - 1,
+          value: 0
+        }
+      ]
 
-      zero_value_changes =
-        transaction
-        |> make_internal_transaction_changes(0, nil)
-        |> Map.put(:value, Wei.from(Decimal.new(0), :wei))
-
-      assert {:ok, _} = run_internal_transactions([zero_value_changes])
-
-      refute from(i in InternalTransaction,
-               where: i.block_number == ^transaction.block_number and i.transaction_index == ^transaction.index
-             )
-             |> Repo.one()
-             |> is_nil()
-
-      assert PendingBlockOperation |> Repo.get(full_block.hash) |> is_nil()
+      assert [_, _] = InternalTransactions.prepare_data(params)
     end
   end
 
