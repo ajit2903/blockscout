@@ -1,0 +1,15 @@
+version: 2.1
+
+jobs:
+  noop:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - run:
+          name: No-op
+          command: echo "No CircleCI pipeline configured for this repository."
+
+workflows:
+  noop-workflow:
+    jobs:
+      - noop
