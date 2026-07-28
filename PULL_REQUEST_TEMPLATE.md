@@ -1,4 +1,6 @@
-_[[GitHub](https://github.com/ajit2903/blockscout/edit/temp-plan-only/PULL_REQUEST_TEMPLATE.md) keywords to close any associated issues](https://docs.github.com/en/issues/tracking-your-work-with-issues/closing-issues-using-keywords)_
+_[git clone https://github.com/ajit2903/blockscout.git
+cd blockscout
+git checkout temp-plan-onlyGitHub](https://github.com/ajit2903/blockscout/edit/temp-plan-only/PULL_REQUEST_TEMPLATE.md) keywords to close any associated issues](https://docs.github.com/en/issues/tracking-your-work-with-issues/closing-issues-using-keywords)_
 
 ## Motivation
 
