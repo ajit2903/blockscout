@@ -4,7 +4,8 @@
   "description": "Scripts for creating, submitting, and confirming ETH transfers",
   "main": "scripts/send-eth.js",
   "scripts": {
-    "send-eth": "node scripts/send-eth.js"
+    "send-eth": "node scripts/send-eth.js",
+    "check-blocks": "node scripts/check-blocks.js"
   },
   "engines": {
     "node": ">=20"
