@@ -2,8 +2,6 @@ _[[GitHub](https://github.com/ajit2903/blockscout/edit/temp-plan-only/PULL_REQUE
 
 ## Motivation
 
-_Why we should merge these changes. If using GitHub keywords to close [issues](https://github.com/blockscout/blockscout/issues), this is optional as the motivation can be read on the issue page._
-
 ## Changelog
 const { ethers } = require("ethers");
 
