@@ -65,6 +65,71 @@ defmodule BlockScoutWeb.GraphQL.Schema.Query.TransactionTest do
              }
     end
 
+    test "resolves signed_authorizations for a set code transaction", %{conn: conn} do
+      block = insert(:block)
+
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block, status: :ok)
+
+      {:ok, address_hash} = Explorer.Chain.Hash.Address.cast("0x1000000000000000000000000000000000000001")
+      {:ok, authority_hash} = Explorer.Chain.Hash.Address.cast("0x2000000000000000000000000000000000000002")
+
+      {:ok, signed_authorization} =
+        %Explorer.Chain.SignedAuthorization{}
+        |> Explorer.Chain.SignedAuthorization.changeset(%{
+          transaction_hash: transaction.hash,
+          index: 0,
+          chain_id: 1,
+          address: address_hash,
+          nonce: 0,
+          r: 1,
+          s: 1,
+          v: 27,
+          authority: authority_hash
+        })
+        |> Explorer.Repo.insert()
+
+      query = """
+      query ($hash: FullHash!) {
+        transaction(hash: $hash) {
+          signed_authorizations {
+            chain_id
+            address
+            nonce
+            r
+            s
+            v
+            authority
+          }
+        }
+      }
+      """
+
+      variables = %{"hash" => to_string(transaction.hash)}
+
+      conn = get(conn, "/api/v1/graphql", query: query, variables: variables)
+
+      assert json_response(conn, 200) == %{
+               "data" => %{
+                 "transaction" => %{
+                   "signed_authorizations" => [
+                     %{
+                       "chain_id" => signed_authorization.chain_id,
+                       "address" => to_string(signed_authorization.address),
+                       "nonce" => signed_authorization.nonce,
+                       "r" => to_string(signed_authorization.r),
+                       "s" => to_string(signed_authorization.s),
+                       "v" => signed_authorization.v,
+                       "authority" => to_string(signed_authorization.authority)
+                     }
+                   ]
+                 }
+               }
+             }
+    end
+
     test "errors for non-existent transaction hash", %{conn: conn} do
       transaction = build(:transaction)
 

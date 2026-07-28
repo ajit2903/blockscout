@@ -1,7 +1,7 @@
 defmodule BlockScoutWeb.GraphQL.Schema.Transaction do
   @moduledoc false
 
-  alias BlockScoutWeb.GraphQL.Resolvers.{Block, InternalTransaction}
+  alias BlockScoutWeb.GraphQL.Resolvers.{Block, InternalTransaction, SignedAuthorization}
 
   case Application.compile_env(:explorer, :chain_type) do
     :celo ->
@@ -53,6 +53,10 @@ defmodule BlockScoutWeb.GraphQL.Schema.Transaction do
           resolve(&InternalTransaction.get_by/3)
 
           complexity(fn params, child_complexity -> process_complexity(params, child_complexity) end)
+        end
+
+        field :signed_authorizations, list_of(:signed_authorization) do
+          resolve(&SignedAuthorization.get_by/3)
         end
 
         unquote_splicing(@chain_type_fields)
@@ -256,6 +260,20 @@ defmodule BlockScoutWeb.GraphQL.Schema.Types do
     field(:icon_url, :string)
     field(:volume_24h, :decimal)
     field(:contract_address_hash, :address_hash)
+  end
+
+  @desc """
+  Represents an EIP-7702 signed authorization included in a set-code transaction, granting the
+  recovered `authority` account's code execution to the delegate `address`.
+  """
+  object :signed_authorization do
+    field(:chain_id, :integer)
+    field(:address, :address_hash)
+    field(:nonce, :integer)
+    field(:r, :decimal)
+    field(:s, :decimal)
+    field(:v, :integer)
+    field(:authority, :address_hash)
   end
 
   @desc """

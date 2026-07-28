@@ -16,6 +16,7 @@ defmodule Explorer.GraphQL do
   alias Explorer.Chain.{
     Hash,
     InternalTransaction,
+    SignedAuthorization,
     Token,
     TokenTransfer,
     Transaction
@@ -72,6 +73,23 @@ defmodule Explorer.GraphQL do
     query
     |> InternalTransaction.where_nonpending_block()
     |> InternalTransaction.where_transaction_has_multiple_internal_transactions()
+  end
+
+  @doc """
+  Returns a query to fetch signed authorizations (EIP-7702) for a given transaction.
+
+  Orders signed authorizations by ascending index.
+  """
+  @spec transaction_to_signed_authorizations_query(Transaction.t()) :: Ecto.Query.t()
+  def transaction_to_signed_authorizations_query(%Transaction{
+        hash: %Hash{byte_count: unquote(Hash.Full.byte_count())} = hash
+      }) do
+    from(
+      sa in SignedAuthorization,
+      where: sa.transaction_hash == ^hash,
+      order_by: [asc: sa.index],
+      select: sa
+    )
   end
 
   @doc """
