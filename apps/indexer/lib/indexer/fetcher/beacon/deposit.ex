@@ -29,7 +29,8 @@ defmodule Indexer.Fetcher.Beacon.Deposit do
     :deposit_index,
     :last_processed_log_block_number,
     :last_processed_log_index,
-    :json_rpc_named_arguments
+    :json_rpc_named_arguments,
+    :wallet_addresses
   ]
 
   def start_link([init_opts, server_opts]) do
@@ -75,7 +76,8 @@ defmodule Indexer.Fetcher.Beacon.Deposit do
           deposit_index: last_processed_deposit.index,
           last_processed_log_block_number: last_processed_deposit.block_number,
           last_processed_log_index: last_processed_deposit.log_index,
-          json_rpc_named_arguments: json_rpc_named_arguments
+          json_rpc_named_arguments: json_rpc_named_arguments,
+          wallet_addresses: Application.get_env(:indexer, __MODULE__)[:wallet_addresses] || []
         }
 
         Process.send_after(self(), :process_logs, state.interval)
@@ -147,7 +149,8 @@ defmodule Indexer.Fetcher.Beacon.Deposit do
           deposit_index: deposit_index,
           last_processed_log_block_number: last_processed_log_block_number,
           last_processed_log_index: last_processed_log_index,
-          json_rpc_named_arguments: json_rpc_named_arguments
+          json_rpc_named_arguments: json_rpc_named_arguments,
+          wallet_addresses: wallet_addresses
         } = state
       ) do
     deposits =
@@ -155,7 +158,8 @@ defmodule Indexer.Fetcher.Beacon.Deposit do
       |> Deposit.get_logs_with_deposits(
         last_processed_log_block_number,
         last_processed_log_index,
-        batch_size
+        batch_size,
+        wallet_addresses
       )
       |> Enum.map(&db_log_to_deposit/1)
 
