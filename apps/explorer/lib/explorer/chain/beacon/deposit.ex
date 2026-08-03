@@ -258,7 +258,8 @@ defmodule Explorer.Chain.Beacon.Deposit do
           Hash.Address.t(),
           non_neg_integer(),
           non_neg_integer(),
-          non_neg_integer()
+          non_neg_integer(),
+          [String.t()]
         ) :: [
           %{
             first_topic: Hash.Full.t(),
@@ -271,7 +272,7 @@ defmodule Explorer.Chain.Beacon.Deposit do
             block_timestamp: DateTime.t()
           }
         ]
-  def get_logs_with_deposits(deposit_contract_address_hash, log_block_number, log_index, limit) do
+  def get_logs_with_deposits(deposit_contract_address_hash, log_block_number, log_index, limit, wallet_addresses \\ []) do
     query =
       from(log in Log,
         join: transaction in assoc(log, :transaction),
@@ -289,6 +290,13 @@ defmodule Explorer.Chain.Beacon.Deposit do
         order_by: [asc: log.block_number, asc: log.index],
         select_merge: map(transaction, ^~w(from_address_hash block_timestamp)a)
       )
+
+    query =
+      if wallet_addresses != [] do
+        where(query, [_log, transaction], transaction.from_address_hash in ^wallet_addresses)
+      else
+        query
+      end
 
     Repo.all(query)
   end
