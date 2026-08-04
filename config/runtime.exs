@@ -1624,6 +1624,9 @@ config :indexer, Indexer.Fetcher.Beacon.Deposit,
   batch_size: ConfigHelper.parse_integer_env_var("INDEXER_BEACON_DEPOSIT_FETCHER_BATCH_SIZE", 1_000),
   wallet_addresses: ConfigHelper.parse_list_env_var("INDEXER_BEACON_DEPOSIT_FETCHER_WALLET_ADDRESSES")
 
+config :explorer, Explorer.Chain.Beacon.Deposit,
+  wallet_addresses: ConfigHelper.parse_list_env_var("INDEXER_BEACON_DEPOSIT_FETCHER_WALLET_ADDRESSES")
+
 config :indexer, Indexer.Fetcher.Beacon.Deposit.Status.Supervisor,
   disabled?:
     ConfigHelper.chain_type() != :ethereum ||

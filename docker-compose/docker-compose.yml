@@ -42,7 +42,7 @@ services:
     links:
       - db:database
     environment:
-      CHAIN_TYPE: default
+      CHAIN_TYPE: ethereum
       ETHEREUM_JSONRPC_HTTP_URL: http://anvil:8545/
       ETHEREUM_JSONRPC_TRACE_URL: http://anvil:8545/
       ETHEREUM_JSONRPC_WS_URL: ws://anvil:8545/
