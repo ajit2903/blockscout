@@ -5,7 +5,8 @@
   "main": "scripts/send-eth.js",
   "scripts": {
     "send-eth": "node scripts/send-eth.js",
-    "check-blocks": "node scripts/check-blocks.js"
+    "check-blocks": "node scripts/check-blocks.js",
+    "test": "node --test scripts/*.test.js"
   },
   "engines": {
     "node": ">=20"
