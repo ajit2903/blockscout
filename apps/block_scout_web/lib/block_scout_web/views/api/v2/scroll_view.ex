@@ -1,9 +1,10 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.API.V2.ScrollView do
   use BlockScoutWeb, :view
 
   alias BlockScoutWeb.API.V2.TransactionView
-  alias Explorer.Chain.Scroll.{Batch, L1FeeParam, Reader}
   alias Explorer.Chain.{Data, Transaction}
+  alias Explorer.Chain.Scroll.{Batch, L1FeeParam, Reader}
 
   @api_true [api?: true]
 

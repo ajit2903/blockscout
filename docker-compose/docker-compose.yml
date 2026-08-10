@@ -1,6 +1,13 @@
-version: '3.9'
 
 services:
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: anvil
+    entrypoint: ["anvil"]
+    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "1337"]
+    ports:
+      - "8545:8545"
+
   redis-db:
     extends:
       file: ./services/redis.yml
@@ -21,6 +28,7 @@ services:
 
   backend:
     depends_on:
+      - anvil
       - db
       - redis-db
     extends:
@@ -34,10 +42,11 @@ services:
     links:
       - db:database
     environment:
-        ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8545/
-        ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:8545/
-        ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8545/
-        CHAIN_ID: '1337'
+      CHAIN_TYPE: ethereum
+      ETHEREUM_JSONRPC_HTTP_URL: http://anvil:8545/
+      ETHEREUM_JSONRPC_TRACE_URL: http://anvil:8545/
+      ETHEREUM_JSONRPC_WS_URL: ws://anvil:8545/
+      CHAIN_ID: '1337'
 
   nft_media_handler:
     depends_on:
@@ -105,3 +114,6 @@ services:
     extends:
       file: ./services/nginx.yml
       service: proxy
+
+volumes:
+  backend-dets:

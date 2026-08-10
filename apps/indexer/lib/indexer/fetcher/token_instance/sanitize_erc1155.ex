@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.TokenInstance.SanitizeERC1155 do
   @moduledoc """
     This fetcher is stands for creating token instances which wasn't inserted yet and index meta for them.
@@ -7,9 +8,9 @@ defmodule Indexer.Fetcher.TokenInstance.SanitizeERC1155 do
 
   use GenServer, restart: :transient
 
+  alias Explorer.{Chain, Repo}
   alias Explorer.Chain.Token.Instance
   alias Explorer.Migrator.MigrationStatus
-  alias Explorer.{Chain, Repo}
   alias Indexer.Fetcher.TokenInstance.Sanitize
 
   @migration_name "backfill_erc1155"

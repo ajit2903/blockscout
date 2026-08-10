@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.MultichainSearchDb.MainExportQueueTest do
   use ExUnit.Case
   use Explorer.DataCase
@@ -178,22 +179,14 @@ defmodule Indexer.Fetcher.MultichainSearchDb.MainExportQueueTest do
                     addresses: [
                       %{
                         hash: ^address_2_hash_string,
-                        token_type: "UNSPECIFIED",
                         is_contract: false,
-                        token_name: nil,
                         contract_name: nil,
-                        ens_name: nil,
-                        is_token: false,
                         is_verified_contract: false
                       },
                       %{
                         hash: ^address_1_hash_string,
-                        token_type: "UNSPECIFIED",
                         is_contract: false,
-                        token_name: nil,
                         contract_name: nil,
-                        ens_name: nil,
-                        is_token: false,
                         is_verified_contract: false
                       }
                     ],

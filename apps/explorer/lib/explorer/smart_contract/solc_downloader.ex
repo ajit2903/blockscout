@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.SmartContract.SolcDownloader do
   @moduledoc """
   Checks to see if the requested solc compiler version exists, and if not it
@@ -91,7 +92,7 @@ defmodule Explorer.SmartContract.SolcDownloader do
   end
 
   defp download(version) do
-    download_path = "https://solc-bin.ethereum.org/bin/soljson-#{version}.js"
+    download_path = "https://binaries.soliditylang.org/bin/soljson-#{version}.js"
 
     download_path
     |> HttpClient.get!([], timeout: 60_000, recv_timeout: 60_000)

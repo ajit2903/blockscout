@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 import Config
 
 alias EthereumJSONRPC.Variant
@@ -21,7 +22,7 @@ config :block_scout_web, BlockScoutWeb.Endpoint,
   ],
   https: [
     port: port + 1,
-    cipher_suite: :strong,
+    cipher_suite: :compatible,
     certfile: System.get_env("CERTFILE") || "priv/cert/selfsigned.pem",
     keyfile: System.get_env("KEYFILE") || "priv/cert/selfsigned_key.pem"
   ]
@@ -38,7 +39,7 @@ config :block_scout_web, BlockScoutWeb.HealthEndpoint,
   ],
   https: [
     port: port + 1,
-    cipher_suite: :strong,
+    cipher_suite: :compatible,
     certfile: System.get_env("CERTFILE") || "priv/cert/selfsigned.pem",
     keyfile: System.get_env("KEYFILE") || "priv/cert/selfsigned_key.pem"
   ]
@@ -65,7 +66,7 @@ queue_target = ConfigHelper.parse_integer_env_var("DATABASE_QUEUE_TARGET", 50)
 config :explorer, Explorer.Repo,
   database: database,
   hostname: hostname,
-  url: System.get_env("DATABASE_URL"),
+  url: ConfigHelper.parse_url_env_var("DATABASE_URL"),
   pool_size: pool_size,
   queue_target: queue_target
 
@@ -132,7 +133,6 @@ for repo <- [
       Explorer.Repo.Filecoin,
       Explorer.Repo.Optimism,
       Explorer.Repo.PolygonEdge,
-      Explorer.Repo.PolygonZkevm,
       Explorer.Repo.RSK,
       Explorer.Repo.Scroll,
       Explorer.Repo.Shibarium,
@@ -147,7 +147,7 @@ for repo <- [
   config :explorer, repo,
     database: database,
     hostname: hostname,
-    url: System.get_env("DATABASE_URL"),
+    url: ConfigHelper.parse_url_env_var("DATABASE_URL"),
     pool_size: 1
 end
 

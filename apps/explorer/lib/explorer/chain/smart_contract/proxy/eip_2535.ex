@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.SmartContract.Proxy.EIP2535 do
   @moduledoc """
   Module for fetching proxy implementation from https://eips.ethereum.org/EIPS/eip-2535 (Diamond Proxy)
@@ -14,6 +15,7 @@ defmodule Explorer.Chain.SmartContract.Proxy.EIP2535 do
 
   @max_implementations_number_per_proxy 100
 
+  @impl true
   def quick_resolve_implementations(_proxy_address, _proxy_type),
     do:
       {:cont,
@@ -21,6 +23,7 @@ defmodule Explorer.Chain.SmartContract.Proxy.EIP2535 do
          implementation_getter: {:call, @facet_addresses_signature}
        }}
 
+  @impl true
   def resolve_implementations(_proxy_address, _proxy_type, prefetched_values) do
     with {:ok, value} <- Map.fetch(prefetched_values, :implementation_getter),
          {:ok, address_hashes} <- extract_address_hashes(value) do

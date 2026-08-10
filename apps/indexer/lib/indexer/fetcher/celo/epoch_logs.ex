@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.Celo.EpochLogs do
   @moduledoc """
   Fetches logs that are not linked to transaction, but to the block.
@@ -8,6 +9,9 @@ defmodule Indexer.Fetcher.Celo.EpochLogs do
       epoch_block_number?: 1,
       pre_migration_block_number?: 1
     ]
+
+  use Utils.RuntimeEnvHelper,
+    chain_identity: [:explorer, :chain_identity]
 
   alias EthereumJSONRPC.{Logs, Transport}
   alias Explorer.Chain.Cache.CeloCoreContracts
@@ -44,7 +48,7 @@ defmodule Indexer.Fetcher.Celo.EpochLogs do
   def fetch(blocks, json_rpc_named_arguments)
 
   def fetch(blocks, json_rpc_named_arguments) do
-    if Application.get_env(:explorer, :chain_type) == :celo do
+    if chain_identity() == {:optimism, :celo} do
       do_fetch(blocks, json_rpc_named_arguments)
     else
       []

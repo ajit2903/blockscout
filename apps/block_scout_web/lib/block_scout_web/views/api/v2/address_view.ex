@@ -1,11 +1,13 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.API.V2.AddressView do
   use BlockScoutWeb, :view
-  use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
+  use Utils.CompileTimeEnvHelper, chain_identity: [:explorer, :chain_identity]
 
   import BlockScoutWeb.Account.AuthController, only: [current_user: 1]
 
   alias BlockScoutWeb.{AddressContractView, AddressView}
   alias BlockScoutWeb.API.V2.{ApiView, Helper, TokenView}
+  alias Explorer.Account.WatchlistAddress
   alias Explorer.{Chain, Market}
   alias Explorer.Chain.Address
   alias Explorer.Chain.Address.Counters
@@ -120,7 +122,7 @@ defmodule BlockScoutWeb.API.V2.AddressView do
         "has_logs" => Counters.check_if_logs_at_address(address.hash, @api_true),
         "has_tokens" => Counters.check_if_tokens_at_address(address.hash, @api_true),
         "has_token_transfers" => Counters.check_if_token_transfers_at_address(address.hash, @api_true),
-        "watchlist_address_id" => Chain.select_watchlist_address_id(get_watchlist_id(conn), address.hash),
+        "watchlist_address_id" => WatchlistAddress.select_watchlist_address_id(get_watchlist_id(conn), address.hash),
         "has_beacon_chain_withdrawals" => Counters.check_if_withdrawals_at_address(address.hash, @api_true)
       })
 
@@ -228,7 +230,7 @@ defmodule BlockScoutWeb.API.V2.AddressView do
              @api_true
            ) do
         # `%{hash: address_hash}` will match with `address_with_info(_, address_hash)` clause in `BlockScoutWeb.API.V2.Helper`
-        {:ok, token_instance} ->
+        {:ok, %Instance{} = token_instance} ->
           %Instance{
             token_instance
             | owner: %{hash: address_hash},
@@ -272,8 +274,8 @@ defmodule BlockScoutWeb.API.V2.AddressView do
           map(),
           %{address: Address.t(), creation_transaction_from_address: Address.t()}
         ) :: map()
-  case @chain_type do
-    :filecoin ->
+  case @chain_identity do
+    {:filecoin, nil} ->
       defp chain_type_fields(result, %{creation_transaction_from_address: creation_transaction_from_address}) do
         # credo:disable-for-next-line Credo.Check.Design.AliasUsage
         BlockScoutWeb.API.V2.FilecoinView.put_filecoin_robust_address(result, %{
@@ -282,7 +284,13 @@ defmodule BlockScoutWeb.API.V2.AddressView do
         })
       end
 
-    :zilliqa ->
+    {:optimism, :celo} ->
+      defp chain_type_fields(result, %{address: address}) do
+        # credo:disable-for-next-line Credo.Check.Design.AliasUsage
+        BlockScoutWeb.API.V2.CeloView.extend_address_json_response(result, address)
+      end
+
+    {:zilliqa, nil} ->
       defp chain_type_fields(result, %{address: address}) do
         # credo:disable-for-next-line Credo.Check.Design.AliasUsage
         BlockScoutWeb.API.V2.ZilliqaView.extend_address_json_response(result, address)

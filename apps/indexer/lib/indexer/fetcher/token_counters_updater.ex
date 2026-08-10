@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.TokenCountersUpdater do
   @moduledoc """
   Updates counters for cataloged tokens.
@@ -6,7 +7,6 @@ defmodule Indexer.Fetcher.TokenCountersUpdater do
 
   require Logger
 
-  alias Explorer.Chain
   alias Explorer.Chain.Token
   alias Explorer.MicroserviceInterfaces.MultichainSearch
   alias Indexer.BufferedTask
@@ -28,7 +28,7 @@ defmodule Indexer.Fetcher.TokenCountersUpdater do
   def child_spec([init_options, gen_server_options]) do
     {state, mergeable_init_options} = Keyword.pop(init_options, :json_rpc_named_arguments)
 
-    unless state do
+    if !state do
       raise ArgumentError,
             ":json_rpc_named_arguments must be provided to `#{__MODULE__}.child_spec " <>
               "to allow for json_rpc calls when running."
@@ -63,7 +63,7 @@ defmodule Indexer.Fetcher.TokenCountersUpdater do
 
     entries
     |> Enum.reduce(%{}, fn token, acc ->
-      {transfers_count, holders_count} = Chain.fetch_token_counters(token.contract_address_hash, :infinity)
+      {transfers_count, holders_count} = Token.fetch_token_counters(token.contract_address_hash, :infinity)
 
       data_for_multichain = MultichainSearch.prepare_token_counters_for_queue(transfers_count, holders_count)
       Map.put(acc, token.contract_address_hash.bytes, data_for_multichain)

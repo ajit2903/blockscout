@@ -62,6 +62,7 @@ dump.rdb
 .cursorignore
 .cursorrules
 .elixir_ls
+.claude/settings.local.json
 
 **.dec**
 

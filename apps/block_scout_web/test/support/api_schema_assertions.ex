@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.TestApiSchemaAssertions do
   @moduledoc """
   Test helper that automatically validates JSON responses against the OpenAPI schema
@@ -20,43 +21,45 @@ defmodule BlockScoutWeb.TestApiSchemaAssertions do
     json
   end
 
-  defp maybe_assert_schema(%Plug.Conn{method: "GET", request_path: request_path} = _conn, status_code, json)
+  defp maybe_assert_schema(%Plug.Conn{method: method, request_path: request_path} = _conn, status_code, json)
        when is_integer(status_code) and is_binary(request_path) do
-    if String.starts_with?(request_path, "/api/") do
-      spec = BlockScoutWeb.ApiSpec.spec()
+    method_atom = String.downcase(method) |> String.to_atom()
+    public_spec = BlockScoutWeb.Specs.Public.spec()
+    private_spec = BlockScoutWeb.Specs.Private.spec()
 
-      with {:path_item, {:ok, %PathItem{} = path_item}} <- {:path_item, find_path_item(spec, request_path)},
-           {:operation, %Operation{} = operation} <- {:operation, Map.get(path_item, :get)},
-           {:schema, {:ok, schema}} <- {:schema, find_response_schema(operation, status_code)} do
-        Logger.info("Validated response against schema for path: #{request_path} and status code: #{status_code}")
+    with {:path_item, {:ok, spec, %PathItem{} = path_item}} <-
+           {:path_item, find_path_item([public_spec, private_spec], request_path)},
+         {:operation, %Operation{} = operation} <- {:operation, Map.get(path_item, method_atom)},
+         {:schema, {:ok, schema}} <- {:schema, find_response_schema(operation, status_code)} do
+      Logger.info("Validated response against schema for path: #{request_path} and status code: #{status_code}")
 
-        OpenApiSpex.TestAssertions.assert_raw_schema(json, schema, spec)
-      else
-        {:path_item, :error} ->
-          Logger.warning("No schema found for path: #{request_path}")
-          :ok
+      OpenApiSpex.TestAssertions.assert_raw_schema(json, schema, spec)
+    else
+      {:path_item, :error} ->
+        Logger.warning("No schema found for path: #{request_path}")
+        :ok
 
-        {:operation, _} ->
-          Logger.warning("No GET operation found for path: #{request_path}")
-          :ok
+      {:operation, _} ->
+        Logger.warning("No #{method} operation found for path: #{request_path}")
+        :ok
 
-        {:schema, :error} ->
-          Logger.warning("No schema found for path: #{request_path} and status code: #{status_code}")
-          :ok
-      end
+      {:schema, :error} ->
+        Logger.warning("No schema found for path: #{request_path} and status code: #{status_code}")
+        :ok
     end
   end
 
   defp maybe_assert_schema(_conn, _status_code, _json), do: :ok
 
-  defp find_path_item(%{paths: paths} = _spec, request_path) when is_map(paths) do
+  defp find_path_item(specs, request_path) do
     api_relative = strip_api_prefix(request_path)
 
-    with {:ok, {_, path_item}} <- match_template_path(paths, api_relative) do
-      {:ok, path_item}
-    else
-      _ -> :error
-    end
+    Enum.reduce_while(specs, :error, fn %{paths: paths} = spec, acc ->
+      case match_template_path(paths, api_relative) do
+        {:ok, {_, path_item}} -> {:halt, {:ok, spec, path_item}}
+        _ -> {:cont, acc}
+      end
+    end)
   end
 
   defp strip_api_prefix("/api" <> rest), do: rest
@@ -65,15 +68,34 @@ defmodule BlockScoutWeb.TestApiSchemaAssertions do
   defp match_template_path(paths_map, actual_path) do
     actual_segments = split_path(actual_path)
 
-    Enum.find_value(paths_map, fn {template_path, %PathItem{} = item} ->
-      template_segments = split_path(template_path)
-
-      if segments_match?(template_segments, actual_segments) do
-        {:ok, {template_path, item}}
-      else
-        false
-      end
-    end) || :error
+    # The OpenAPI spec paths map is unordered, so when multiple templates match
+    # the same request path, Enum.find_value would pick one non-deterministically.
+    # This matters because the router has many sibling routes where a literal
+    # segment coexists with a dynamic parameter at the same position, e.g.:
+    #
+    #   GET /batches/count          → :batches_count
+    #   GET /batches/{batch_number} → :batch
+    #
+    # Phoenix resolves these by declaration order (literal first), but here we
+    # match against the spec map, where both templates satisfy segments_match?.
+    # To mirror Phoenix's behaviour we prefer the template with the fewest
+    # dynamic segments — the more specific (literal) path always wins.
+    paths_map
+    |> Enum.filter(fn {template_path, %PathItem{}} ->
+      segments_match?(split_path(template_path), actual_segments)
+    end)
+    |> Enum.min_by(
+      fn {template_path, _} ->
+        segments = split_path(template_path)
+        dynamic_count = Enum.count(segments, &dynamic_segment?/1)
+        {dynamic_count, length(segments), template_path}
+      end,
+      fn -> nil end
+    )
+    |> case do
+      {_, %PathItem{}} = match -> {:ok, match}
+      nil -> :error
+    end
   end
 
   defp split_path(path) when is_binary(path) do

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Beacon.Deposit do
   @moduledoc """
   Models a deposit in the beacon chain.
@@ -5,8 +6,8 @@ defmodule Explorer.Chain.Beacon.Deposit do
 
   use Explorer.Schema
 
-  alias Explorer.Chain.{Address, Block, Data, Hash, Log, Transaction, Wei}
   alias Explorer.{Chain, Repo, SortingHelper}
+  alias Explorer.Chain.{Address, Block, Data, Hash, Log, Transaction, Wei}
 
   @deposit_event_signature "0x649BBC62D0E31342AFEA4E5CD82D4049E7E1EE912FC0889AA790803BE39038C5"
 
@@ -68,6 +69,9 @@ defmodule Explorer.Chain.Beacon.Deposit do
 
   @spec statuses :: [atom()]
   def statuses, do: @statuses_enum
+
+  @spec event_signature :: String.t()
+  def event_signature, do: @deposit_event_signature
 
   @sorting [desc: :index]
 
@@ -185,6 +189,7 @@ defmodule Explorer.Chain.Beacon.Deposit do
   end
 
   defp beacon_deposits_list_query(entity, hash, options) do
+    wallet_addresses = Application.get_env(:explorer, __MODULE__)[:wallet_addresses] || []
     paging_options = Keyword.get(options, :paging_options, Chain.default_paging_options())
 
     {required_necessity_by_association, optional_necessity_by_association} =
@@ -199,6 +204,7 @@ defmodule Explorer.Chain.Beacon.Deposit do
         :all -> q
       end
     end)
+    |> maybe_filter_deposits_by_wallet_addresses(wallet_addresses)
     |> SortingHelper.apply_sorting(@sorting, [])
     |> SortingHelper.page_with_sorting(paging_options, @sorting, [])
     |> Chain.join_associations(Map.new(required_necessity_by_association))
@@ -254,7 +260,8 @@ defmodule Explorer.Chain.Beacon.Deposit do
           Hash.Address.t(),
           non_neg_integer(),
           non_neg_integer(),
-          non_neg_integer()
+          non_neg_integer(),
+          [String.t()]
         ) :: [
           %{
             first_topic: Hash.Full.t(),
@@ -267,26 +274,38 @@ defmodule Explorer.Chain.Beacon.Deposit do
             block_timestamp: DateTime.t()
           }
         ]
-  def get_logs_with_deposits(deposit_contract_address_hash, log_block_number, log_index, limit) do
-    query =
-      from(log in Log,
-        join: transaction in assoc(log, :transaction),
-        where: transaction.block_consensus == true,
-        where: log.block_hash == transaction.block_hash,
-        where: log.address_hash == ^deposit_contract_address_hash,
-        where: log.first_topic == ^@deposit_event_signature,
-        where: {log.block_number, log.index} > {^log_block_number, ^log_index},
-        limit: ^limit,
-        select:
-          map(
-            log,
-            ^~w(first_topic data index block_number block_hash transaction_hash)a
-          ),
-        order_by: [asc: log.block_number, asc: log.index],
-        select_merge: map(transaction, ^~w(from_address_hash block_timestamp)a)
-      )
+  def get_logs_with_deposits(deposit_contract_address_hash, log_block_number, log_index, limit, wallet_addresses \\ []) do
+    from(log in Log,
+      join: transaction in assoc(log, :transaction),
+      join: block in assoc(log, :block),
+      where: transaction.block_consensus == true or (is_nil(transaction.block_consensus) and block.consensus == true),
+      where: log.block_hash == transaction.block_hash,
+      where: log.address_hash == ^deposit_contract_address_hash,
+      where: log.first_topic == ^@deposit_event_signature,
+      where: {log.block_number, log.index} > {^log_block_number, ^log_index},
+      limit: ^limit,
+      select:
+        map(
+          log,
+          ^~w(first_topic data index block_number block_hash transaction_hash)a
+        ),
+      order_by: [asc: log.block_number, asc: log.index],
+      select_merge: map(transaction, ^~w(from_address_hash block_timestamp)a)
+    )
+    |> maybe_filter_log_transactions_by_wallet_addresses(wallet_addresses)
+    |> Repo.all()
+  end
 
-    Repo.all(query)
+  defp maybe_filter_deposits_by_wallet_addresses(query, []), do: query
+
+  defp maybe_filter_deposits_by_wallet_addresses(query, wallet_addresses) do
+    where(query, [deposit], deposit.from_address_hash in ^wallet_addresses)
+  end
+
+  defp maybe_filter_log_transactions_by_wallet_addresses(query, []), do: query
+
+  defp maybe_filter_log_transactions_by_wallet_addresses(query, wallet_addresses) do
+    where(query, [_log, transaction, _block], transaction.from_address_hash in ^wallet_addresses)
   end
 
   defp put_withdrawal_address_hash(deposit) do

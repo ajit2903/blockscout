@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule RPCTranslatorForwarder do
   @moduledoc """
   Phoenix router limits forwarding,
@@ -17,16 +18,19 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
 
   use Utils.CompileTimeEnvHelper,
     chain_type: [:explorer, :chain_type],
+    chain_identity: [:explorer, :chain_identity],
     graphql_enabled: [:block_scout_web, [Api.GraphQL, :enabled]],
     graphql_max_complexity: [:block_scout_web, [Api.GraphQL, :max_complexity]],
     graphql_token_limit: [:block_scout_web, [Api.GraphQL, :token_limit]],
     reading_enabled: [:block_scout_web, [__MODULE__, :reading_enabled]],
-    writing_enabled: [:block_scout_web, [__MODULE__, :writing_enabled]]
+    writing_enabled: [:block_scout_web, [__MODULE__, :writing_enabled]],
+    mud_enabled_compile_time?: [:explorer, [Explorer.Chain.Mud, :enabled]]
 
   use Utils.RuntimeEnvHelper,
     mud_enabled?: [:explorer, [Explorer.Chain.Mud, :enabled]]
 
   alias BlockScoutWeb.Routers.{
+    AccountRouter,
     AddressBadgesApiV2Router,
     APIKeyV2Router,
     SmartContractsApiV2Router,
@@ -35,7 +39,6 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
   }
 
   alias BlockScoutWeb.Plug.{CheckApiV2, CheckFeature}
-  alias BlockScoutWeb.Routers.AccountRouter
 
   @max_query_string_length 5_000
 
@@ -75,7 +78,7 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
     plug(CheckApiV2)
     plug(:fetch_session)
     plug(:protect_from_forgery)
-    plug(OpenApiSpex.Plug.PutApiSpec, module: BlockScoutWeb.ApiSpec)
+    plug(OpenApiSpex.Plug.PutApiSpec, module: BlockScoutWeb.Specs.Public)
   end
 
   pipeline :api_v2_no_session do
@@ -109,7 +112,7 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
     plug(CheckFeature, feature_check: &mud_enabled?/0)
   end
 
-  alias BlockScoutWeb.API.V2
+  alias BlockScoutWeb.API.{Legacy, V2}
 
   forward("/account", AccountRouter)
 
@@ -120,8 +123,9 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
     delete("/token-info", V2.ImportController, :delete_token_info)
 
     get("/smart-contracts/:address_hash_param", V2.ImportController, :try_to_search_contract)
+    post("/smart-contracts/:address_hash_param/audit-reports", V2.ImportController, :import_audit_report)
 
-    chain_scope :optimism do
+    if @chain_type == :optimism do
       post("/optimism/interop/", V2.OptimismController, :interop_import)
     end
   end
@@ -137,38 +141,40 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
     end
 
     scope "/config" do
+      get("/backend", V2.ConfigController, :backend)
       get("/backend-version", V2.ConfigController, :backend_version)
       get("/csv-export", V2.ConfigController, :csv_export)
+      get("/indexer", V2.ConfigController, :indexer)
       get("/public-metrics", V2.ConfigController, :public_metrics)
+      get("/smart-contracts/languages", V2.ConfigController, :languages_list)
+      get("/db-background-migrations", V2.ConfigController, :db_background_migrations)
 
-      chain_scope :celo do
+      if @chain_identity == {:optimism, :celo} do
         get("/celo", V2.ConfigController, :celo)
       end
     end
+
+    get("/csv-exports/:uuid_param", V2.CsvExportController, :get_csv_export)
 
     scope "/transactions" do
       get("/", V2.TransactionController, :transactions)
       get("/watchlist", V2.TransactionController, :watchlist_transactions)
       get("/stats", V2.TransactionController, :stats)
 
-      if @chain_type == :polygon_zkevm do
-        get("/zkevm-batch/:batch_number", V2.TransactionController, :polygon_zkevm_batch)
-      end
-
       if @chain_type == :zksync do
-        get("/zksync-batch/:batch_number", V2.TransactionController, :zksync_batch)
+        get("/zksync-batch/:batch_number_param", V2.TransactionController, :zksync_batch)
       end
 
       if @chain_type == :arbitrum do
-        get("/arbitrum-batch/:batch_number", V2.TransactionController, :arbitrum_batch)
+        get("/arbitrum-batch/:batch_number_param", V2.TransactionController, :arbitrum_batch)
       end
 
-      chain_scope :optimism do
-        get("/optimism-batch/:batch_number", V2.TransactionController, :optimism_batch)
+      if @chain_type == :optimism do
+        get("/optimism-batch/:batch_number_param", V2.TransactionController, :optimism_batch)
       end
 
       if @chain_type == :scroll do
-        get("/scroll-batch/:batch_number", V2.TransactionController, :scroll_batch)
+        get("/scroll-batch/:batch_number_param", V2.TransactionController, :scroll_batch)
       end
 
       if @chain_type == :suave do
@@ -179,6 +185,8 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
       get("/:transaction_hash_param/token-transfers", V2.TransactionController, :token_transfers)
       get("/:transaction_hash_param/internal-transactions", V2.TransactionController, :internal_transactions)
       get("/:transaction_hash_param/logs", V2.TransactionController, :logs)
+      get("/:transaction_hash_param/fhe-operations", V2.TransactionController, :fhe_operations)
+
       get("/:transaction_hash_param/raw-trace", V2.TransactionController, :raw_trace)
       get("/:transaction_hash_param/state-changes", V2.TransactionController, :state_changes)
       get("/:transaction_hash_param/summary", V2.TransactionController, :summary)
@@ -191,7 +199,7 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
         get("/:transaction_hash_param/blobs", V2.TransactionController, :blobs)
       end
 
-      chain_scope :ethereum do
+      if @chain_type == :ethereum do
         get("/:transaction_hash_param/beacon/deposits", V2.TransactionController, :beacon_deposits)
       end
     end
@@ -206,26 +214,26 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
 
     scope "/blocks" do
       get("/", V2.BlockController, :blocks)
-      get("/:block_hash_or_number", V2.BlockController, :block)
-      get("/:block_hash_or_number/transactions", V2.BlockController, :transactions)
-      get("/:block_hash_or_number/internal-transactions", V2.BlockController, :internal_transactions)
-      get("/:block_hash_or_number/withdrawals", V2.BlockController, :withdrawals)
-      get("/:block_number/countdown", V2.BlockController, :block_countdown)
+      get("/:block_hash_or_number_param", V2.BlockController, :block)
+      get("/:block_hash_or_number_param/transactions", V2.BlockController, :transactions)
+      get("/:block_hash_or_number_param/internal-transactions", V2.BlockController, :internal_transactions)
+      get("/:block_hash_or_number_param/withdrawals", V2.BlockController, :withdrawals)
+      get("/:block_number_param/countdown", V2.BlockController, :block_countdown)
 
       if @chain_type == :arbitrum do
-        get("/arbitrum-batch/:batch_number", V2.BlockController, :arbitrum_batch)
+        get("/arbitrum-batch/:batch_number_param", V2.BlockController, :arbitrum_batch)
       end
 
-      chain_scope :optimism do
-        get("/optimism-batch/:batch_number", V2.BlockController, :optimism_batch)
+      if @chain_type == :optimism do
+        get("/optimism-batch/:batch_number_param", V2.BlockController, :optimism_batch)
       end
 
       if @chain_type == :scroll do
-        get("/scroll-batch/:batch_number", V2.BlockController, :scroll_batch)
+        get("/scroll-batch/:batch_number_param", V2.BlockController, :scroll_batch)
       end
 
-      chain_scope :ethereum do
-        get("/:block_hash_or_number/beacon/deposits", V2.BlockController, :beacon_deposits)
+      if @chain_type == :ethereum do
+        get("/:block_hash_or_number_param/beacon/deposits", V2.BlockController, :beacon_deposits)
       end
     end
 
@@ -251,12 +259,12 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
       get("/:address_hash_param/nft", V2.AddressController, :nft_list)
       get("/:address_hash_param/nft/collections", V2.AddressController, :nft_collections)
 
-      chain_scope :celo do
+      if @chain_identity == {:optimism, :celo} do
         get("/:address_hash_param/celo/election-rewards", V2.AddressController, :celo_election_rewards)
         get("/:address_hash_param/celo/election-rewards/csv", V2.CsvExportController, :celo_election_rewards_csv)
       end
 
-      chain_scope :ethereum do
+      if @chain_type == :ethereum do
         get("/:address_hash_param/beacon/deposits", V2.AddressController, :beacon_deposits)
       end
     end
@@ -267,13 +275,8 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
       get("/transactions/watchlist", V2.MainPageController, :watchlist_transactions)
       get("/indexing-status", V2.MainPageController, :indexing_status)
 
-      chain_scope :optimism do
-        get("/optimism-deposits", V2.MainPageController, :optimism_deposits)
-      end
-
-      if @chain_type == :polygon_zkevm do
-        get("/zkevm/batches/confirmed", V2.PolygonZkevmController, :batches_confirmed)
-        get("/zkevm/batches/latest-number", V2.PolygonZkevmController, :batch_latest_number)
+      if @chain_type == :optimism do
+        get("/optimism-deposits", V2.OptimismController, :main_page_deposits)
       end
 
       if @chain_type == :zksync do
@@ -290,6 +293,7 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
 
     scope "/stats" do
       get("/", V2.StatsController, :stats)
+      get("/hot-smart-contracts", V2.StatsController, :hot_smart_contracts)
 
       scope "/charts" do
         get("/transactions", V2.StatsController, :transactions_chart)
@@ -298,11 +302,8 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
       end
     end
 
-    chain_scope :optimism do
+    if @chain_type == :optimism do
       scope "/optimism" do
-        get("/txn-batches", V2.OptimismController, :transaction_batches)
-        get("/txn-batches/count", V2.OptimismController, :transaction_batches_count)
-        get("/txn-batches/:l2_block_range_start/:l2_block_range_end", V2.OptimismController, :transaction_batches)
         get("/batches", V2.OptimismController, :batches)
         get("/batches/count", V2.OptimismController, :batches_count)
         get("/batches/da/celestia/:height/:commitment", V2.OptimismController, :batch_by_celestia_blob)
@@ -322,7 +323,7 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
       end
     end
 
-    chain_scope :celo do
+    if @chain_identity == {:optimism, :celo} do
       scope "/celo/epochs" do
         get("/", V2.CeloController, :epochs)
         get("/:number", V2.CeloController, :epoch)
@@ -356,18 +357,6 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
       get("/counters", V2.WithdrawalController, :withdrawals_counters)
     end
 
-    scope "/zkevm" do
-      if @chain_type == :polygon_zkevm do
-        get("/batches", V2.PolygonZkevmController, :batches)
-        get("/batches/count", V2.PolygonZkevmController, :batches_count)
-        get("/batches/:batch_number", V2.PolygonZkevmController, :batch)
-        get("/deposits", V2.PolygonZkevmController, :deposits)
-        get("/deposits/count", V2.PolygonZkevmController, :deposits_count)
-        get("/withdrawals", V2.PolygonZkevmController, :withdrawals)
-        get("/withdrawals/count", V2.PolygonZkevmController, :withdrawals_count)
-      end
-    end
-
     scope "/proxy" do
       scope "/3rdparty" do
         get("/:platform_id", V2.Proxy.UniversalProxyController, :index)
@@ -385,28 +374,7 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
         end
 
         scope "/solidityscan" do
-          get("/smart-contracts/:address_hash/report", V2.SmartContractController, :solidityscan_report)
-        end
-      end
-
-      # todo: deprecate in the next major/minor release in 10.0.0. Related frontend task https://github.com/blockscout/frontend/issues/2945.
-      scope "/3dparty" do
-        get("/:platform_id", V2.Proxy.UniversalProxyController, :index)
-
-        scope "/noves-fi" do
-          get("/transactions/:transaction_hash_param", V2.Proxy.NovesFiController, :transaction)
-
-          get("/addresses/:address_hash_param/transactions", V2.Proxy.NovesFiController, :address_transactions)
-
-          get("/transaction-descriptions", V2.Proxy.NovesFiController, :describe_transactions)
-        end
-
-        scope "/xname" do
-          get("/addresses/:address_hash_param", V2.Proxy.XnameController, :address)
-        end
-
-        scope "/solidityscan" do
-          get("/smart-contracts/:address_hash/report", V2.SmartContractController, :solidityscan_report)
+          get("/smart-contracts/:address_hash/report", V2.Proxy.SolidityScanController, :solidityscan_report)
         end
       end
 
@@ -431,7 +399,7 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
       end
     end
 
-    chain_scope :ethereum do
+    if @chain_type == :ethereum do
       scope "/beacon" do
         get("/deposits", V2.Ethereum.DepositController, :list)
         get("/deposits/count", V2.Ethereum.DepositController, :count)
@@ -475,17 +443,19 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
       end
     end
 
-    scope "/mud" do
-      pipe_through(:mud)
-      get("/worlds", V2.MudController, :worlds)
-      get("/worlds/count", V2.MudController, :worlds_count)
-      get("/worlds/:world/tables", V2.MudController, :world_tables)
-      get("/worlds/:world/systems", V2.MudController, :world_systems)
-      get("/worlds/:world/systems/:system", V2.MudController, :world_system)
-      get("/worlds/:world/tables/count", V2.MudController, :world_tables_count)
-      get("/worlds/:world/tables/:table_id/records", V2.MudController, :world_table_records)
-      get("/worlds/:world/tables/:table_id/records/count", V2.MudController, :world_table_records_count)
-      get("/worlds/:world/tables/:table_id/records/:record_id", V2.MudController, :world_table_record)
+    if @mud_enabled_compile_time? do
+      scope "/mud" do
+        pipe_through(:mud)
+        get("/worlds", V2.MudController, :worlds)
+        get("/worlds/count", V2.MudController, :worlds_count)
+        get("/worlds/:world/tables", V2.MudController, :world_tables)
+        get("/worlds/:world/systems", V2.MudController, :world_systems)
+        get("/worlds/:world/systems/:system", V2.MudController, :world_system)
+        get("/worlds/:world/tables/count", V2.MudController, :world_tables_count)
+        get("/worlds/:world/tables/:table_id/records", V2.MudController, :world_table_records)
+        get("/worlds/:world/tables/:table_id/records/count", V2.MudController, :world_table_records_count)
+        get("/worlds/:world/tables/:table_id/records/:record_id", V2.MudController, :world_table_record)
+      end
     end
 
     scope "/arbitrum" do
@@ -497,12 +467,13 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
         get("/batches", V2.ArbitrumController, :batches)
         get("/batches/count", V2.ArbitrumController, :batches_count)
         get("/batches/:batch_number", V2.ArbitrumController, :batch)
-        get("/batches/da/anytrust/:data_hash", V2.ArbitrumController, :batch_by_data_availability_info)
+        get("/batches/da/anytrust/:data_hash", V2.ArbitrumController, :batch_by_anytrust_da_info)
+        get("/batches/da/eigenda/:data_hash", V2.ArbitrumController, :batch_by_eigenda_da_info)
 
         get(
           "/batches/da/celestia/:height/:transaction_commitment",
           V2.ArbitrumController,
-          :batch_by_data_availability_info
+          :batch_by_celestia_da_info
         )
       end
     end
@@ -511,6 +482,19 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
       get("/", V2.AdvancedFilterController, :list)
       get("/csv", V2.AdvancedFilterController, :list_csv)
       get("/methods", V2.AdvancedFilterController, :list_methods)
+    end
+  end
+
+  scope "/legacy" do
+    pipe_through(:api_v2)
+
+    scope "/logs" do
+      get("/get-logs", Legacy.LogsController, :get_logs)
+    end
+
+    scope "/block" do
+      get("/get-block-number-by-time", Legacy.BlockController, :get_block_number_by_time)
+      get("/eth-block-number", Legacy.BlockController, :eth_block_number)
     end
   end
 
@@ -567,6 +551,12 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
     get("/multichain-search-export", BlockScoutWeb.API.HealthController, :multichain_search_db_export)
   end
 
+  scope "/v2" do
+    pipe_through(:api_v2)
+
+    get("/*path", BlockScoutWeb.API.V2.FallbackController, :unknown_action)
+  end
+
   scope "/" do
     pipe_through(:api)
     alias BlockScoutWeb.API.{EthRPC, RPC}
@@ -587,7 +577,7 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
           "transaction" => {RPC.TransactionController, []}
         }
         |> then(fn options ->
-          if @chain_type == :celo do
+          if @chain_identity == {:optimism, :celo} do
             Map.put(options, "epoch", {BlockScoutWeb.API.RPC.CeloController, []})
           else
             options

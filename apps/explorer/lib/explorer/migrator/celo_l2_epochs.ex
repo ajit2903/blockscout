@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Migrator.CeloL2Epochs do
   @moduledoc """
   Backfills Celo L2 epochs data. It processes logs related to epoch processing
@@ -15,9 +16,9 @@ defmodule Explorer.Migrator.CeloL2Epochs do
   import Ecto.Query
 
   alias Explorer.Chain.Celo.Epoch
-  alias Explorer.{Helper, Repo}
   alias Explorer.Chain.{Import, Log}
   alias Explorer.Chain.Import.Runner.Celo.Epochs
+  alias Explorer.{Helper, Repo}
   alias Explorer.Migrator.FillingMigration
 
   @migration_name "celo_l2_epochs"

@@ -1,18 +1,15 @@
 defmodule BlockScoutWeb.ViewingTransactionsTest do
   @moduledoc false
 
-  import Mox
+  use BlockScoutWeb.FeatureCase, async: true
 
-  use BlockScoutWeb.FeatureCase, async: false
-
-  alias BlockScoutWeb.{AddressPage, TransactionListPage, TransactionLogsPage, TransactionPage}
   alias Explorer.Chain.Wei
-
-  setup :set_mox_global
+  alias BlockScoutWeb.{AddressPage, Notifier, TransactionListPage, TransactionLogsPage, TransactionPage}
 
   setup do
     block =
       insert(:block, %{
+        number: 555,
         timestamp: Timex.now() |> Timex.shift(hours: -2),
         gas_used: 123_987
       })
@@ -28,7 +25,7 @@ defmodule BlockScoutWeb.ViewingTransactionsTest do
     taft = insert(:address)
 
     # From Lincoln to Taft.
-    transaction_from_lincoln =
+    txn_from_lincoln =
       :transaction
       |> insert(from_address: lincoln, to_address: taft)
       |> with_block(block)
@@ -48,15 +45,9 @@ defmodule BlockScoutWeb.ViewingTransactionsTest do
       )
       |> with_block(block, gas_used: Decimal.new(1_230_000_000_000_123_000), status: :ok)
 
-    insert(:log, address: lincoln, index: 0, transaction: transaction, block: block, block_number: block.number)
+    insert(:log, address: lincoln, index: 0, transaction: transaction)
 
-    internal =
-      insert(:internal_transaction,
-        index: 0,
-        transaction: transaction,
-        block_hash: transaction.block_hash,
-        block_index: 0
-      )
+    internal = insert(:internal_transaction, index: 0, transaction: transaction)
 
     {:ok,
      %{
@@ -66,7 +57,7 @@ defmodule BlockScoutWeb.ViewingTransactionsTest do
        lincoln: lincoln,
        taft: taft,
        transaction: transaction,
-       transaction_from_lincoln: transaction_from_lincoln
+       txn_from_lincoln: txn_from_lincoln
      }}
   end
 
@@ -83,13 +74,10 @@ defmodule BlockScoutWeb.ViewingTransactionsTest do
       |> refute_has(TransactionListPage.transaction(pending))
     end
 
-    test "viewing the pending transactions list", %{
-      pending: pending,
-      pending_contract: pending_contract,
-      session: session
-    } do
+    test "viewing the pending tab", %{pending: pending, pending_contract: pending_contract, session: session} do
       session
-      |> TransactionListPage.visit_pending_transactions_page()
+      |> TransactionListPage.visit_page()
+      |> TransactionListPage.click_pending()
       |> assert_has(TransactionListPage.transaction(pending))
       |> assert_has(TransactionListPage.transaction(pending_contract))
       |> assert_has(TransactionListPage.transaction_status(pending_contract))
@@ -105,22 +93,39 @@ defmodule BlockScoutWeb.ViewingTransactionsTest do
         |> with_contract_creation(contract_address)
 
       :internal_transaction_create
-      |> insert(transaction: transaction, index: 0, block_hash: transaction.block_hash, block_index: 0)
+      |> insert(transaction: transaction, index: 0)
       |> with_contract_creation(contract_address)
 
       session
       |> TransactionListPage.visit_page()
       |> assert_has(TransactionListPage.contract_creation(transaction))
     end
+
+    test "live update replaces reorg transaction", %{session: session} do
+      block = insert(:block, number: 10)
+      transaction =
+        :transaction
+        |> insert()
+        |> with_block(block)
+
+      session
+      |> TransactionListPage.visit_page()
+      |> assert_has(TransactionListPage.transaction(transaction))
+
+      Notifier.handle_event({:chain_event, :transactions, [%{transaction | block_number: 11}]})
+
+      assert_has(session, TransactionListPage.transaction_block_number(transaction, 11))
+    end
+
+    test "displays the transaction's block number", %{session: session, transaction: transaction} do
+      session
+      |> TransactionListPage.visit_page()
+      |> assert_has(TransactionListPage.transaction_block_number(transaction, 555))
+    end
   end
 
   describe "viewing a pending transaction page" do
     test "can see a pending transaction's details", %{session: session, pending: pending} do
-      EthereumJSONRPC.Mox
-      |> expect(:json_rpc, fn %{id: _id, method: "net_version", params: []}, _options ->
-        {:ok, "100"}
-      end)
-
       session
       |> TransactionPage.visit_page(pending)
       |> assert_has(TransactionPage.detail_hash(pending))

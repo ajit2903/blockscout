@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.ChainSpec.GenesisData do
   @moduledoc """
   Handles the genesis data import.
@@ -14,7 +15,8 @@ defmodule Explorer.ChainSpec.GenesisData do
   alias Explorer.Chain.SmartContract
   alias Explorer.ChainSpec.Geth.Importer, as: GethImporter
   alias Explorer.ChainSpec.Parity.Importer
-  alias Explorer.{Helper, HttpClient}
+  alias Explorer.HttpClient
+  alias Utils.ConfigHelper, as: UtilsConfigHelper
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -154,7 +156,7 @@ defmodule Explorer.ChainSpec.GenesisData do
   # Retrieves a JSON data from either a file or URL based on the source.
   @spec fetch_spec_as_json(binary()) :: {:ok, list() | map()} | {:error, any()}
   defp fetch_spec_as_json(path) do
-    if Helper.valid_url?(path) do
+    if UtilsConfigHelper.valid_url?(path) do
       fetch_from_url(path)
     else
       fetch_from_file(path)
@@ -173,7 +175,7 @@ defmodule Explorer.ChainSpec.GenesisData do
   # Fetches JSON data from a provided URL.
   @spec fetch_from_url(binary()) :: {:ok, list() | map()} | {:error, Jason.DecodeError.t() | any()}
   defp fetch_from_url(url) do
-    case HttpClient.get(url) do
+    case HttpClient.get(url, [], timeout: 60_000, recv_timeout: 60_000) do
       {:ok, %{body: body, status_code: 200}} ->
         {:ok, Jason.decode!(body)}
 

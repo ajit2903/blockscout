@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.CaptchaHelper do
   @moduledoc """
   A helper for CAPTCHA
@@ -122,7 +123,7 @@ defmodule BlockScoutWeb.CaptchaHelper do
 
   # v3 case
   defp success?(%{"success" => true, "score" => score, "hostname" => hostname}) do
-    unless Helper.get_app_host() == hostname do
+    if Helper.get_app_host() != hostname do
       Logger.warning("reCAPTCHA v3 Hostname mismatch: #{inspect(hostname)} != #{inspect(Helper.get_app_host())}")
     end
 
@@ -136,7 +137,7 @@ defmodule BlockScoutWeb.CaptchaHelper do
 
   # v2 case
   defp success?(%{"success" => true, "hostname" => hostname}) do
-    unless Helper.get_app_host() == hostname do
+    if Helper.get_app_host() != hostname do
       Logger.warning("reCAPTCHA v2 Hostname mismatch: #{inspect(hostname)} != #{inspect(Helper.get_app_host())}")
     end
 

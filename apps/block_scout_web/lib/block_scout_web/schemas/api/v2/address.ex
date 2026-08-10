@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.Schemas.API.V2.Address.ChainTypeCustomizations do
   @moduledoc false
   require OpenApiSpex
@@ -13,6 +14,12 @@ defmodule BlockScoutWeb.Schemas.API.V2.Address.ChainTypeCustomizations do
     example: "f25nml2cfbljvn4goqtclhifepvfnicv6g7mfmmvq",
     nullable: true
   }
+
+  @doc """
+   OpenAPI schema for Filecoin robust address.
+  """
+  @spec filecoin_robust_address_schema() :: Schema.t()
+  def filecoin_robust_address_schema, do: @filecoin_robust_address_schema
 
   def chain_type_fields(schema) do
     case Application.get_env(:explorer, :chain_type) do
@@ -96,7 +103,7 @@ defmodule BlockScoutWeb.Schemas.API.V2.Address do
           items: General.Tag
         },
         watchlist_names: %Schema{
-          description: "Watch list name associated with the address",
+          description: "Watchlist name associated with the address",
           type: :array,
           items: General.WatchlistName
         },
@@ -116,10 +123,7 @@ defmodule BlockScoutWeb.Schemas.API.V2.Address do
         :implementations,
         :is_verified,
         :ens_domain_name,
-        :metadata,
-        :private_tags,
-        :watchlist_names,
-        :public_tags
+        :metadata
       ],
       additionalProperties: false
     }

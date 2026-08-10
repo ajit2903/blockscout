@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.ContractCode do
   @moduledoc """
   Fetches `contract_code` `t:Explorer.Chain.Address.t/0`.
@@ -79,7 +80,7 @@ defmodule Indexer.Fetcher.ContractCode do
   def child_spec([init_options, gen_server_options]) do
     {state, mergeable_init_options} = Keyword.pop(init_options, :json_rpc_named_arguments)
 
-    unless state do
+    if !state do
       raise ArgumentError,
             ":json_rpc_named_arguments must be provided to `#{__MODULE__}.child_spec " <>
               "to allow for json_rpc calls when running."
@@ -195,6 +196,23 @@ defmodule Indexer.Fetcher.ContractCode do
         code_addresses_params = Addresses.extract_addresses(%{codes: params})
         {:ok, code_addresses_params}
 
+      {:ok, %{params_list: params, errors: errors}} ->
+        unique_errors =
+          errors
+          |> Enum.map(fn
+            %{message: message} ->
+              message
+
+            error ->
+              inspect(error)
+          end)
+          |> Enum.uniq()
+
+        Logger.error(fn -> ["failed to fetch some contract codes: ", inspect(unique_errors)] end)
+
+        code_addresses_params = Addresses.extract_addresses(%{codes: params})
+        {:ok, code_addresses_params}
+
       error ->
         error
     end
@@ -240,6 +258,9 @@ defmodule Indexer.Fetcher.ContractCode do
       {:ok, %{addresses: addresses}} ->
         Accounts.drop(addresses)
         {:ok, addresses}
+
+      {:ok, _} ->
+        {:ok, []}
 
       {:error, step, reason, _changes_so_far} ->
         Logger.error(

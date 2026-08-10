@@ -1,7 +1,11 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Address.Counters do
   @moduledoc """
     Functions related to Explorer.Chain.Address counters
   """
+  use Utils.RuntimeEnvHelper,
+    chain_identity: [:explorer, :chain_identity]
+
   import Ecto.Query, only: [from: 2, limit: 2, select: 3, union_all: 2, where: 3]
 
   import Explorer.Chain,
@@ -177,7 +181,7 @@ defmodule Explorer.Chain.Address.Counters do
     from(
       tb in CurrentTokenBalance,
       where: tb.address_hash == ^address_hash,
-      where: tb.value > 0
+      where: tb.value > 0 or tb.token_type == "ERC-7984"
     )
   end
 
@@ -224,31 +228,22 @@ defmodule Explorer.Chain.Address.Counters do
   defp address_hash_to_internal_transactions_limited_count_query(address_hash) do
     query_to_address_hash_wrapped =
       InternalTransaction
-      |> InternalTransaction.where_nonpending_block()
-      |> InternalTransaction.where_address_fields_match(address_hash, :to_address_hash)
+      |> InternalTransaction.where_nonpending_operation()
+      |> InternalTransaction.where_address_fields_match(address_hash, :to)
       |> InternalTransaction.where_is_different_from_parent_transaction()
       |> limit(@counters_limit)
       |> wrapped_union_subquery()
 
     query_from_address_hash_wrapped =
       InternalTransaction
-      |> InternalTransaction.where_nonpending_block()
+      |> InternalTransaction.where_nonpending_operation()
       |> InternalTransaction.where_address_fields_match(address_hash, :from_address_hash)
-      |> InternalTransaction.where_is_different_from_parent_transaction()
-      |> limit(@counters_limit)
-      |> wrapped_union_subquery()
-
-    query_created_contract_address_hash_wrapped =
-      InternalTransaction
-      |> InternalTransaction.where_nonpending_block()
-      |> InternalTransaction.where_address_fields_match(address_hash, :created_contract_address_hash)
       |> InternalTransaction.where_is_different_from_parent_transaction()
       |> limit(@counters_limit)
       |> wrapped_union_subquery()
 
     query_to_address_hash_wrapped
     |> union_all(^query_from_address_hash_wrapped)
-    |> union_all(^query_created_contract_address_hash_wrapped)
     |> wrapped_union_subquery()
   end
 
@@ -453,7 +448,7 @@ defmodule Explorer.Chain.Address.Counters do
       )
 
     celo_election_rewards_count_task =
-      if Application.get_env(:explorer, :chain_type) == :celo do
+      if chain_identity() == {:optimism, :celo} do
         configure_task(
           :celo_election_rewards,
           cached_counters,

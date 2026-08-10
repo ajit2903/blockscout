@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Optimism.DisputeGame do
   @moduledoc "Models a dispute game for Optimism."
 
@@ -15,6 +16,8 @@ defmodule Explorer.Chain.Optimism.DisputeGame do
 
   @chain_id_bob_mainnet 60_808
   @chain_id_bob_sepolia 808_813
+  @chain_id_megaeth_mainnet 4326
+  @chain_id_megaeth_testnet_v2 6343
 
   @typedoc """
     * `index` - A unique index of the dispute game.
@@ -99,14 +102,13 @@ defmodule Explorer.Chain.Optimism.DisputeGame do
   def l2_block_number_from_extra_data(nil), do: 0
 
   def l2_block_number_from_extra_data(%Data{bytes: extra_data}) do
-    current_chain_id =
-      case ChainId.get_id() do
-        nil -> Application.get_env(:block_scout_web, :chain_id)
-        chain_id -> chain_id
-      end
-
     first_bits =
-      if current_chain_id in [@chain_id_bob_mainnet, @chain_id_bob_sepolia] do
+      if ChainId.get_id() in [
+           @chain_id_bob_mainnet,
+           @chain_id_bob_sepolia,
+           @chain_id_megaeth_mainnet,
+           @chain_id_megaeth_testnet_v2
+         ] do
         64
       else
         256

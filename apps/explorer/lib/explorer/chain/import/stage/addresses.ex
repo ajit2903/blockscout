@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Import.Stage.Addresses do
   @moduledoc """
   Import addresses.
@@ -17,7 +18,7 @@ defmodule Explorer.Chain.Import.Stage.Addresses do
   @impl Stage
   def all_runners, do: runners()
 
-  @addresses_chunk_size 50
+  @addresses_chunk_size 200
 
   @impl Stage
   def multis(runner_to_changes_list, options) do

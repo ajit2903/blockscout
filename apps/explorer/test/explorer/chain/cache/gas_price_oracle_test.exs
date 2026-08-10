@@ -1,5 +1,9 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Cache.GasPriceOracleTest do
   use Explorer.DataCase, async: false
+
+  use Utils.CompileTimeEnvHelper,
+    chain_identity: [:explorer, :chain_identity]
 
   alias Explorer.Chain.Cache.GasPriceOracle
   alias Explorer.Chain.Wei
@@ -672,7 +676,7 @@ defmodule Explorer.Chain.Cache.GasPriceOracleTest do
                GasPriceOracle.get_average_gas_price(1, 35, 60, 90)
     end
 
-    if Application.compile_env(:explorer, :chain_type) == :celo do
+    if @chain_identity == {:optimism, :celo} do
       test "ignores transactions with unsupported types" do
         block =
           insert(:block,

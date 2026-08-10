@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.ABIEncodedValueView do
   @moduledoc """
   Renders a decoded value that is encoded according to an ABI.
@@ -6,8 +7,7 @@ defmodule BlockScoutWeb.ABIEncodedValueView do
   values via `<pre>` tags, and that is hard to do in an eex template.
   """
   use BlockScoutWeb, :view
-
-  import Phoenix.LiveView.Helpers, only: [sigil_H: 2]
+  use Phoenix.LiveView
 
   alias ABI.FunctionSelector
   alias Phoenix.HTML

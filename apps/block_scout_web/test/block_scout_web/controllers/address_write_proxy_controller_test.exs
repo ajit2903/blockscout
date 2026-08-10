@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.AddressWriteProxyControllerTest do
   use BlockScoutWeb.ConnCase, async: true
   use ExUnit.Case, async: false
@@ -36,9 +37,9 @@ defmodule BlockScoutWeb.AddressWriteProxyControllerTest do
         :internal_transaction_create,
         index: 0,
         transaction: transaction,
+        transaction_index: transaction.index,
         created_contract_address: contract_address,
-        block_hash: transaction.block_hash,
-        block_index: 0
+        block_number: transaction.block_number
       )
 
       insert(:smart_contract, address_hash: contract_address.hash, contract_code_md5: "123")
@@ -63,9 +64,9 @@ defmodule BlockScoutWeb.AddressWriteProxyControllerTest do
         :internal_transaction_create,
         index: 0,
         transaction: transaction,
+        transaction_index: transaction.index,
         created_contract_address: contract_address,
-        block_hash: transaction.block_hash,
-        block_index: 0
+        block_number: transaction.block_number
       )
 
       conn =

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
   use BlockScoutWeb.ConnCase
 
@@ -18,7 +19,7 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       request =
         conn
         |> put_req_cookie("show_scam_tokens", "true")
-        |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155"})
+        |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155,ERC-7984"})
 
       response = json_response(request, 200)
 
@@ -26,7 +27,7 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
 
       assert response ==
                conn
-               |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155"})
+               |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155,ERC-7984"})
                |> json_response(200)
     end
 
@@ -43,13 +44,15 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       request =
         conn
         |> put_req_cookie("show_scam_tokens", "true")
-        |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155"})
+        |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155,ERC-7984"})
 
       response = json_response(request, 200)
 
       assert List.first(response["items"])["token"]["reputation"] == "scam"
 
-      request = conn |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155"})
+      request =
+        conn |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155,ERC-7984"})
+
       response = json_response(request, 200)
 
       assert response["items"] == []
@@ -64,7 +67,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
 
       insert(:token_transfer, transaction: transaction)
 
-      request = conn |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155"})
+      request =
+        conn |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155,ERC-7984"})
+
       response = json_response(request, 200)
 
       assert List.first(response["items"])["token"]["reputation"] == "ok"
@@ -79,7 +84,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       tt = insert(:token_transfer, transaction: transaction)
       insert(:scam_badge_to_address, address_hash: tt.token_contract_address_hash)
 
-      request = conn |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155"})
+      request =
+        conn |> get("/api/v2/advanced-filters", %{"transaction_types" => "ERC-20,ERC-404,ERC-721,ERC-1155,ERC-7984"})
+
       response = json_response(request, 200)
 
       assert List.first(response["items"])["token"]["reputation"] == "ok"
@@ -92,6 +99,23 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       assert response["next_page_params"] == nil
     end
 
+    # Regression: keyset cursor params accept the literal string "null" in addition
+    # to an empty string, signalling that the previous-page item was not of the
+    # corresponding kind (internal transaction / token transfer / batch item).
+    # Locks in the second branch of `General.IntegerStringOrEmptyOrNullLiteral`.
+    test "accepts the literal \"null\" in keyset cursor params", %{conn: conn} do
+      cursor_params = %{
+        "block_number" => "0",
+        "transaction_index" => "0",
+        "internal_transaction_index" => "null",
+        "token_transfer_index" => "null",
+        "token_transfer_batch_index" => "null"
+      }
+
+      request = get(conn, "/api/v2/advanced-filters", cursor_params)
+      assert json_response(request, 200)
+    end
+
     test "get and paginate advanced filter (transactions split between pages)", %{conn: conn} do
       first_transaction = :transaction |> insert() |> with_block()
       insert_list(3, :token_transfer, transaction: first_transaction)
@@ -99,9 +123,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       for i <- 1..3 do
         insert(:internal_transaction,
           transaction: first_transaction,
-          block_hash: first_transaction.block_hash,
-          index: i,
-          block_index: i
+          block_number: first_transaction.block_number,
+          transaction_index: first_transaction.index,
+          index: i
         )
       end
 
@@ -122,9 +146,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       for i <- 1..3 do
         insert(:internal_transaction,
           transaction: first_transaction,
-          block_hash: first_transaction.block_hash,
-          index: i,
-          block_index: i
+          block_number: first_transaction.block_number,
+          transaction_index: first_transaction.index,
+          index: i
         )
       end
 
@@ -146,9 +170,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       for i <- 1..3 do
         insert(:internal_transaction,
           transaction: first_transaction,
-          block_hash: first_transaction.block_hash,
-          index: i,
-          block_index: i
+          block_number: first_transaction.block_number,
+          transaction_index: first_transaction.index,
+          index: i
         )
       end
 
@@ -177,9 +201,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       for i <- 1..3 do
         insert(:internal_transaction,
           transaction: first_transaction,
-          block_hash: first_transaction.block_hash,
-          index: i,
-          block_index: i
+          block_number: first_transaction.block_number,
+          transaction_index: first_transaction.index,
+          index: i
         )
       end
 
@@ -188,9 +212,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       for i <- 1..50 do
         insert(:internal_transaction,
           transaction: second_transaction,
-          block_hash: second_transaction.block_hash,
-          index: i,
-          block_index: i
+          block_number: second_transaction.block_number,
+          transaction_index: second_transaction.index,
+          index: i
         )
       end
 
@@ -207,7 +231,7 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
 
       transaction = insert(:transaction) |> with_block()
 
-      for token_type <- ~w(ERC-20 ERC-404 ERC-721 ERC-1155),
+      for token_type <- ~w(ERC-20 ERC-404 ERC-721 ERC-1155 ERC-7984),
           token = insert(:token, type: token_type),
           _ <- 0..4 do
         insert(:token_transfer,
@@ -224,14 +248,14 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       for i <- 1..30 do
         insert(:internal_transaction,
           transaction: transaction,
-          block_hash: transaction.block_hash,
-          index: i,
-          block_index: i
+          block_number: transaction.block_number,
+          transaction_index: transaction.index,
+          index: i
         )
       end
 
       for transaction_type_filter_string <-
-            ~w(COIN_TRANSFER COIN_TRANSFER,ERC-404 ERC-721,ERC-1155 ERC-20,COIN_TRANSFER,ERC-1155) do
+            ~w(COIN_TRANSFER COIN_TRANSFER,ERC-404 ERC-721,ERC-1155 ERC-20,COIN_TRANSFER,ERC-1155 ERC-7984) do
         transaction_type_filter = transaction_type_filter_string |> String.split(",")
         request = get(conn, "/api/v2/advanced-filters", %{"transaction_types" => transaction_type_filter_string})
         assert response = json_response(request, 200)
@@ -259,6 +283,171 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
           )
         end
       end
+    end
+
+    test "filter by COIN_TRANSFER transaction_type", %{conn: conn} do
+      for i <- 1..50 do
+        value = if i < 20, do: 0, else: 1
+        transaction = insert(:transaction, value: value) |> with_block()
+
+        insert(:internal_transaction,
+          transaction: transaction,
+          value: value,
+          block_number: transaction.block_number,
+          transaction_index: transaction.index,
+          index: i
+        )
+      end
+
+      request = get(conn, "/api/v2/advanced-filters", %{"transaction_types" => "coin_transfer"})
+      assert response = json_response(request, 200)
+
+      assert Enum.all?(response["items"], fn item ->
+               String.upcase(item["type"]) == "COIN_TRANSFER" and item["value"] > 0
+             end)
+
+      request_2nd_page =
+        get(
+          conn,
+          "/api/v2/advanced-filters",
+          Map.merge(%{"transaction_types" => "coin_transfer"}, response["next_page_params"])
+        )
+
+      assert response_2nd_page = json_response(request_2nd_page, 200)
+
+      assert Enum.count(response_2nd_page["items"]) == 12
+
+      assert Enum.all?(response_2nd_page["items"], fn item ->
+               String.upcase(item["type"]) == "COIN_TRANSFER" and item["value"] > 0
+             end)
+
+      check_paginated_response(
+        AdvancedFilter.list(transaction_types: ["COIN_TRANSFER"]),
+        response["items"],
+        response_2nd_page["items"]
+      )
+    end
+
+    test "filter by CONTRACT_INTERACTION transaction_type", %{conn: conn} do
+      contract_address =
+        insert(:address, contract_code: Factory.contract_code_info().bytecode)
+
+      for i <- 1..50 do
+        if i < 20 do
+          transaction = insert(:transaction) |> with_block()
+
+          insert(:internal_transaction,
+            transaction: transaction,
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i
+          )
+        else
+          transaction =
+            insert(:transaction, to_address_hash: contract_address.hash, to_address: contract_address) |> with_block()
+
+          insert(:internal_transaction,
+            transaction: transaction,
+            to_address_hash: contract_address.hash,
+            to_address: contract_address,
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i
+          )
+        end
+      end
+
+      request = get(conn, "/api/v2/advanced-filters", %{"transaction_types" => "contract_interaction"})
+      assert response = json_response(request, 200)
+
+      assert Enum.all?(response["items"], fn item ->
+               item["to"]["hash"] == to_string(contract_address)
+             end)
+
+      request_2nd_page =
+        get(
+          conn,
+          "/api/v2/advanced-filters",
+          Map.merge(%{"transaction_types" => "contract_interaction"}, response["next_page_params"])
+        )
+
+      assert response_2nd_page = json_response(request_2nd_page, 200)
+
+      assert Enum.count(response_2nd_page["items"]) == 12
+
+      assert Enum.all?(response_2nd_page["items"], fn item ->
+               item["to"]["hash"] == to_string(contract_address)
+             end)
+
+      check_paginated_response(
+        AdvancedFilter.list(transaction_types: ["CONTRACT_INTERACTION"]),
+        response["items"],
+        response_2nd_page["items"]
+      )
+    end
+
+    test "filter by CONTRACT_CREATION transaction_type", %{conn: conn} do
+      for i <- 1..62 do
+        address = insert(:address, contract_code: Factory.contract_code_info().bytecode)
+
+        if i < 20 do
+          transaction = insert(:transaction) |> with_block()
+
+          insert(:internal_transaction_create,
+            transaction: transaction,
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            created_contract_address: address,
+            to_address_hash: nil,
+            to_address: nil,
+            index: i
+          )
+        else
+          transaction =
+            insert(:transaction,
+              created_contract_address: address,
+              created_contract_address_hash: address.hash,
+              to_address_hash: nil,
+              to_address: nil
+            )
+            |> with_block()
+
+          insert(:internal_transaction,
+            transaction: transaction,
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i
+          )
+        end
+      end
+
+      request = get(conn, "/api/v2/advanced-filters", %{"transaction_types" => "contract_creation"})
+      assert response = json_response(request, 200)
+
+      assert Enum.all?(response["items"], fn item ->
+               is_nil(item["to"]) and not is_nil(item["created_contract"])
+             end)
+
+      request_2nd_page =
+        get(
+          conn,
+          "/api/v2/advanced-filters",
+          Map.merge(%{"transaction_types" => "contract_creation"}, response["next_page_params"])
+        )
+
+      assert response_2nd_page = json_response(request_2nd_page, 200)
+
+      assert Enum.count(response_2nd_page["items"]) == 12
+
+      assert Enum.all?(response_2nd_page["items"], fn item ->
+               is_nil(item["to"]) and not is_nil(item["created_contract"])
+             end)
+
+      check_paginated_response(
+        AdvancedFilter.list(transaction_types: ["CONTRACT_CREATION"]),
+        response["items"],
+        response_2nd_page["items"]
+      )
     end
 
     test "filter by methods", %{conn: conn} do
@@ -310,9 +499,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
           transaction: transaction,
           to_address_hash: contract_address.hash,
           to_address: contract_address,
-          block_hash: transaction.block_hash,
+          block_number: transaction.block_number,
+          transaction_index: transaction.index,
           index: i,
-          block_index: i,
           input: method1
         )
       end
@@ -322,9 +511,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
           transaction: transaction,
           to_address_hash: contract_address.hash,
           to_address: contract_address,
-          block_hash: transaction.block_hash,
+          block_number: transaction.block_number,
+          transaction_index: transaction.index,
           index: i,
-          block_index: i,
           input: method2
         )
       end
@@ -339,12 +528,22 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
 
       method3_transaction =
         :transaction
-        |> insert(to_address_hash: contract_address.hash, to_address: contract_address, input: method3)
+        |> insert(
+          to_address_hash: contract_address.hash,
+          to_address: contract_address,
+          input: method3,
+          has_token_transfers: true
+        )
         |> with_block()
 
       method4_transaction =
         :transaction
-        |> insert(to_address_hash: contract_address.hash, to_address: contract_address, input: method4)
+        |> insert(
+          to_address_hash: contract_address.hash,
+          to_address: contract_address,
+          input: method4,
+          has_token_transfers: true
+        )
         |> with_block()
 
       5 |> insert_list(:token_transfer, transaction: method3_transaction)
@@ -360,6 +559,79 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       assert Enum.count(response["items"]) == 21
     end
 
+    test "filter by methods_names alone", %{conn: conn} do
+      contract_address = insert(:contract_address)
+      transfer_selector = "0xa9059cbb"
+      mint_selector = "0xa0712d68"
+      {:ok, transfer_input} = Data.cast(transfer_selector <> "ab0ba0")
+      {:ok, mint_input} = Data.cast(mint_selector <> "ab0ba0")
+
+      3
+      |> insert_list(:transaction,
+        to_address: contract_address,
+        to_address_hash: contract_address.hash,
+        input: transfer_input
+      )
+      |> with_block()
+
+      5
+      |> insert_list(:transaction,
+        to_address: contract_address,
+        to_address_hash: contract_address.hash,
+        input: mint_input
+      )
+      |> with_block()
+
+      request = get(conn, "/api/v2/advanced-filters", %{"methods_names" => "transfer"})
+      assert response = json_response(request, 200)
+
+      assert Enum.count(response["items"]) == 3
+
+      assert Enum.all?(response["items"], fn item ->
+               String.slice(item["method"], 0..9) == transfer_selector
+             end)
+    end
+
+    test "filter by methods_names merges with methods param", %{conn: conn} do
+      contract_address = insert(:contract_address)
+      transfer_selector = "0xa9059cbb"
+      mint_selector = "0xa0712d68"
+      {:ok, transfer_input} = Data.cast(transfer_selector <> "ab0ba0")
+      {:ok, mint_input} = Data.cast(mint_selector <> "ab0ba0")
+
+      3
+      |> insert_list(:transaction,
+        to_address: contract_address,
+        to_address_hash: contract_address.hash,
+        input: transfer_input
+      )
+      |> with_block()
+
+      5
+      |> insert_list(:transaction,
+        to_address: contract_address,
+        to_address_hash: contract_address.hash,
+        input: mint_input
+      )
+      |> with_block()
+
+      2 |> insert_list(:transaction) |> with_block()
+
+      request =
+        get(conn, "/api/v2/advanced-filters", %{
+          "methods_names" => "transfer",
+          "methods" => mint_selector
+        })
+
+      assert response = json_response(request, 200)
+
+      assert Enum.count(response["items"]) == 8
+
+      assert Enum.all?(response["items"], fn item ->
+               String.slice(item["method"], 0..9) in [transfer_selector, mint_selector]
+             end)
+    end
+
     test "filter by age", %{conn: conn} do
       [_, transaction_a, _, transaction_b, _] =
         for i <- 0..4 do
@@ -367,9 +639,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
 
           insert(:internal_transaction,
             transaction: tx,
+            transaction_index: tx.index,
             index: i + 1,
-            block_index: i + 1,
-            block_hash: tx.block_hash,
+            block_number: tx.block_number,
             block: tx.block
           )
 
@@ -408,9 +680,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
             transaction: transaction,
             from_address_hash: address.hash,
             from_address: address,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer,
@@ -423,9 +695,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
         else
           insert(:internal_transaction,
             transaction: transaction,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer, transaction: transaction, block_number: transaction.block_number, log_index: i)
@@ -452,9 +724,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
             transaction: transaction,
             from_address_hash: address.hash,
             from_address: address,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer,
@@ -467,9 +739,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
         else
           insert(:internal_transaction,
             transaction: transaction,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer, transaction: transaction, block_number: transaction.block_number, log_index: i)
@@ -502,9 +774,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
             transaction: transaction,
             from_address_hash: address_to_include.hash,
             from_address: address_to_include,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer,
@@ -517,9 +789,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
         else
           insert(:internal_transaction,
             transaction: transaction,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer, transaction: transaction, block_number: transaction.block_number, log_index: i)
@@ -550,9 +822,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
             transaction: transaction,
             to_address_hash: address.hash,
             to_address: address,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer,
@@ -565,9 +837,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
         else
           insert(:internal_transaction,
             transaction: transaction,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer, transaction: transaction, block_number: transaction.block_number, log_index: i)
@@ -594,9 +866,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
             transaction: transaction,
             to_address_hash: address.hash,
             to_address: address,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer,
@@ -609,9 +881,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
         else
           insert(:internal_transaction,
             transaction: transaction,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer, transaction: transaction, block_number: transaction.block_number, log_index: i)
@@ -644,9 +916,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
             transaction: transaction,
             to_address_hash: address_to_include.hash,
             to_address: address_to_include,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer,
@@ -659,9 +931,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
         else
           insert(:internal_transaction,
             transaction: transaction,
-            block_hash: transaction.block_hash,
-            index: i + 1,
-            block_index: i + 1
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            index: i + 1
           )
 
           insert(:token_transfer, transaction: transaction, block_number: transaction.block_number, log_index: i)
@@ -694,9 +966,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
               transaction: transaction,
               from_address_hash: from_address.hash,
               from_address: from_address,
-              block_hash: transaction.block_hash,
-              index: i + 1,
-              block_index: i + 1
+              block_number: transaction.block_number,
+              transaction_index: transaction.index,
+              index: i + 1
             )
 
             insert(:token_transfer,
@@ -714,9 +986,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
               transaction: transaction,
               to_address_hash: to_address.hash,
               to_address: to_address,
-              block_hash: transaction.block_hash,
-              index: i + 1,
-              block_index: i + 1
+              block_number: transaction.block_number,
+              transaction_index: transaction.index,
+              index: i + 1
             )
 
             insert(:token_transfer,
@@ -743,9 +1015,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
               to_address: to_address,
               from_address_hash: from_address.hash,
               from_address: from_address,
-              block_hash: transaction.block_hash,
-              index: i + 1,
-              block_index: i + 1
+              block_number: transaction.block_number,
+              transaction_index: transaction.index,
+              index: i + 1
             )
 
             insert(:token_transfer,
@@ -761,9 +1033,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
           true ->
             insert(:internal_transaction,
               transaction: transaction,
-              block_hash: transaction.block_hash,
-              index: i + 1,
-              block_index: i + 1
+              block_number: transaction.block_number,
+              transaction_index: transaction.index,
+              index: i + 1
             )
 
             insert(:token_transfer, transaction: transaction, block_number: transaction.block_number, log_index: i)
@@ -782,6 +1054,94 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       assert Enum.count(response["items"]) == 6
     end
 
+    test "filter by from and to address (intersect corner case)", %{conn: conn} do
+      from_address = insert(:address)
+      to_address = insert(:address)
+
+      transaction =
+        :transaction
+        |> insert(
+          from_address: from_address,
+          from_address_hash: from_address.hash,
+          to_address: to_address,
+          to_address_hash: to_address.hash
+        )
+        |> with_block()
+
+      insert(:internal_transaction,
+        transaction: transaction,
+        block_number: transaction.block_number,
+        transaction_index: transaction.index,
+        index: 51,
+        from_address: from_address,
+        from_address_hash: from_address.hash,
+        to_address: to_address,
+        to_address_hash: to_address.hash
+      )
+
+      insert(:token_transfer,
+        transaction: transaction,
+        block_number: transaction.block_number,
+        log_index: 51,
+        from_address: from_address,
+        from_address_hash: from_address.hash,
+        to_address: to_address,
+        to_address_hash: to_address.hash
+      )
+
+      for i <- 0..50 do
+        transaction =
+          :transaction |> insert(from_address: from_address, from_address_hash: from_address.hash) |> with_block()
+
+        insert(:internal_transaction,
+          transaction: transaction,
+          block_number: transaction.block_number,
+          transaction_index: transaction.index,
+          index: i + 1,
+          from_address: from_address,
+          from_address_hash: from_address.hash
+        )
+
+        insert(:token_transfer,
+          transaction: transaction,
+          block_number: transaction.block_number,
+          log_index: i,
+          from_address: from_address,
+          from_address_hash: from_address.hash
+        )
+
+        transaction = :transaction |> insert(to_address: to_address, to_address_hash: to_address.hash) |> with_block()
+
+        insert(:internal_transaction,
+          transaction: transaction,
+          block_number: transaction.block_number,
+          transaction_index: transaction.index,
+          index: i + 1,
+          to_address: to_address,
+          to_address_hash: to_address.hash
+        )
+
+        insert(:token_transfer,
+          transaction: transaction,
+          block_number: transaction.block_number,
+          log_index: i,
+          to_address: to_address,
+          to_address_hash: to_address.hash
+        )
+      end
+
+      request =
+        get(conn, "/api/v2/advanced-filters", %{
+          "from_address_hashes_to_include" => to_string(from_address.hash),
+          "to_address_hashes_to_include" => to_string(to_address.hash),
+          "address_relation" => "AnD"
+        })
+
+      assert response = json_response(request, 200)
+
+      assert Enum.count(response["items"]) == 3
+    end
+
     test "filter by from or to address", %{conn: conn} do
       from_address = insert(:address)
       to_address = insert(:address)
@@ -797,9 +1157,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
               transaction: transaction,
               from_address_hash: from_address.hash,
               from_address: from_address,
-              block_hash: transaction.block_hash,
-              index: i + 1,
-              block_index: i + 1
+              block_number: transaction.block_number,
+              transaction_index: transaction.index,
+              index: i + 1
             )
 
             insert(:token_transfer,
@@ -817,9 +1177,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
               transaction: transaction,
               to_address_hash: to_address.hash,
               to_address: to_address,
-              block_hash: transaction.block_hash,
-              index: i + 1,
-              block_index: i + 1
+              block_number: transaction.block_number,
+              transaction_index: transaction.index,
+              index: i + 1
             )
 
             insert(:token_transfer,
@@ -846,9 +1206,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
               to_address: to_address,
               from_address_hash: from_address.hash,
               from_address: from_address,
-              block_hash: transaction.block_hash,
-              index: i + 1,
-              block_index: i + 1
+              block_number: transaction.block_number,
+              transaction_index: transaction.index,
+              index: i + 1
             )
 
             insert(:token_transfer,
@@ -864,9 +1224,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
           true ->
             insert(:internal_transaction,
               transaction: transaction,
-              block_hash: transaction.block_hash,
-              index: i + 1,
-              block_index: i + 1
+              block_number: transaction.block_number,
+              transaction_index: transaction.index,
+              index: i + 1
             )
 
             insert(:token_transfer, transaction: transaction, block_number: transaction.block_number, log_index: i)
@@ -890,9 +1250,9 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
 
         insert(:internal_transaction,
           transaction: transaction,
-          block_hash: transaction.block_hash,
+          block_number: transaction.block_number,
+          transaction_index: transaction.index,
           index: 1,
-          block_index: 1,
           value: i * 10 ** 18
         )
 
@@ -1043,7 +1403,8 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
                 to_address: transaction_to_address,
                 to_address_hash: transaction_to_address.hash,
                 value: Enum.random(0..1_000_000),
-                input: method
+                input: method,
+                has_token_transfers: true
               )
               |> with_block()
 
@@ -1068,7 +1429,7 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
         to_timestamp = List.last(transactions).block.timestamp
 
         params = %{
-          "tx_types" => "coin_transfer,ERC-20",
+          "transaction_types" => "COIN_TRANSFER,ERC-20",
           "methods" => method_id_string,
           "age_from" => from_timestamp |> DateTime.to_iso8601(),
           "age_to" => to_timestamp |> DateTime.to_iso8601(),
@@ -1090,7 +1451,7 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
 
         check_paginated_response(
           AdvancedFilter.list(
-            tx_types: ["COIN_TRANSFER", "ERC-20"],
+            transaction_types: ["COIN_TRANSFER", "ERC-20"],
             methods: ["0xa9059cbb"],
             age: [from: from_timestamp, to: to_timestamp],
             from_address_hashes: [
@@ -1119,9 +1480,30 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
     end
   end
 
+  describe "/advanced_filters/methods" do
+    test "returns default list of methods", %{conn: conn} do
+      request = get(conn, "/api/v2/advanced-filters/methods")
+      assert response = json_response(request, 200)
+      assert is_list(response)
+      assert length(response) > 0
+
+      Enum.each(response, fn method ->
+        assert %{"method_id" => method_id, "name" => name} = method
+        assert method_id =~ ~r/^0x[0-9a-f]{8}$/
+        assert is_binary(name) and name != ""
+      end)
+    end
+  end
+
   describe "/advanced_filters/methods?q=" do
     test "returns empty list if method does not exist", %{conn: conn} do
       request = get(conn, "/api/v2/advanced-filters/methods", %{"q" => "foo"})
+      assert response = json_response(request, 200)
+      assert response == []
+    end
+
+    test "returns empty list for empty q", %{conn: conn} do
+      request = get(conn, "/api/v2/advanced-filters/methods", %{"q" => ""})
       assert response = json_response(request, 200)
       assert response == []
     end
@@ -1162,6 +1544,12 @@ defmodule BlockScoutWeb.API.V2.AdvancedFilterControllerTest do
       request = get(conn, "/api/v2/advanced-filters/methods", %{"q" => "0x3078f114"})
       assert response = json_response(request, 200)
       assert response == [%{"method_id" => "0x3078f114", "name" => "getAccess"}]
+    end
+
+    test "returns method id without name if q is valid method id", %{conn: conn} do
+      request = get(conn, "/api/v2/advanced-filters/methods", %{"q" => "0x60fe47b1"})
+      assert response = json_response(request, 200)
+      assert response == [%{"method_id" => "0x60fe47b1", "name" => ""}]
     end
   end
 

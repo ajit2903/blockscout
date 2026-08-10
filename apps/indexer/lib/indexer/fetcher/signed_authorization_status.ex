@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.SignedAuthorizationStatus do
   @moduledoc """
   Fetches `status` `t:Explorer.Chain.SignedAuthorization.t/0`.
@@ -111,7 +112,7 @@ defmodule Indexer.Fetcher.SignedAuthorizationStatus do
   def child_spec([init_options, gen_server_options]) do
     {state, mergeable_init_options} = Keyword.pop(init_options, :json_rpc_named_arguments)
 
-    unless state do
+    if !state do
       raise ArgumentError,
             ":json_rpc_named_arguments must be provided to `#{__MODULE__}.child_spec " <>
               "to allow for json_rpc calls when running."
@@ -219,7 +220,7 @@ defmodule Indexer.Fetcher.SignedAuthorizationStatus do
   defp preload_entries(%{block_hash: block_hash} = entry) do
     block =
       block_hash
-      |> Chain.fetch_block_by_hash()
+      |> Block.fetch_block_by_hash()
       |> Repo.preload([:transactions, [transactions: :signed_authorizations]])
 
     entry

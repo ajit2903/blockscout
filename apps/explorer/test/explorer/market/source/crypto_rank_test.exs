@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Market.Source.CryptoRankTest do
   use ExUnit.Case
 
@@ -62,7 +63,8 @@ defmodule Explorer.Market.Source.CryptoRankTest do
                 symbol: "ETH",
                 total_supply: Decimal.new("120723694"),
                 tvl: nil,
-                volume_24h: Decimal.new("5826359746")
+                volume_24h: Decimal.new("5826359746"),
+                circulating_supply: Decimal.new("120723694")
               }} ==
                CryptoRank.fetch_native_coin()
     end
@@ -99,18 +101,19 @@ defmodule Explorer.Market.Source.CryptoRankTest do
                 symbol: "ETH",
                 total_supply: Decimal.new("120723694"),
                 tvl: nil,
-                volume_24h: Decimal.new("5826359746")
+                volume_24h: Decimal.new("5826359746"),
+                circulating_supply: Decimal.new("120723694")
               }} ==
                CryptoRank.fetch_secondary_coin()
     end
   end
 
   describe "tokens_fetching_enabled?" do
-    test "returns true if coin_id is configured" do
+    test "returns true if platform is configured" do
       assert CryptoRank.tokens_fetching_enabled?()
     end
 
-    test "returns false if coin_id is not configured", %{old_env: old_env} do
+    test "returns false if platform is not configured", %{old_env: old_env} do
       Application.put_env(:explorer, CryptoRank, Keyword.merge(old_env, platform: nil))
 
       refute CryptoRank.tokens_fetching_enabled?()
@@ -154,7 +157,8 @@ defmodule Explorer.Market.Source.CryptoRankTest do
                    },
                    fiat_value: Decimal.new("0.019624517115"),
                    circulating_market_cap: Decimal.new("3046537.982244971760"),
-                   volume_24h: Decimal.new("214644.7428230154531300")
+                   volume_24h: Decimal.new("214644.7428230154531300"),
+                   circulating_supply: Decimal.new("155241424")
                  },
                  %{
                    name: "Zyfi",
@@ -166,7 +170,8 @@ defmodule Explorer.Market.Source.CryptoRankTest do
                    },
                    fiat_value: Decimal.new("0.004467522847"),
                    circulating_market_cap: Decimal.new("1019602.903569369320"),
-                   volume_24h: Decimal.new("527.5318580293320804")
+                   volume_24h: Decimal.new("527.5318580293320804"),
+                   circulating_supply: Decimal.new("228225560")
                  }
                ]
              } == CryptoRank.fetch_tokens(50, 50)

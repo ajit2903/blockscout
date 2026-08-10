@@ -1,15 +1,16 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
   use BlockScoutWeb.ConnCase, async: false
 
   import Mox
 
   alias BlockScoutWeb.API.RPC.AddressController
-  alias Explorer.Chain
+  alias Explorer.{Chain, Repo, TestHelper}
   alias Explorer.Chain.Cache.BackgroundMigrations
-  alias Explorer.Chain.{Events.Subscriber, Transaction, Wei, Repo}
+  alias Explorer.Chain.{Events.Subscriber, InternalTransaction, Transaction, Wei}
   alias Explorer.Chain.Cache.Counters.{AddressesCount, AverageBlockTime}
+  alias Explorer.Utility.AddressIdToAddressHash
   alias Indexer.Fetcher.OnDemand.CoinBalance, as: CoinBalanceOnDemand
-  alias Explorer.Repo
 
   setup :set_mox_global
   setup :verify_on_exit!
@@ -44,6 +45,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
     setup do
       Subscriber.to(:addresses, :on_demand)
       Subscriber.to(:address_coin_balances, :on_demand)
+      Supervisor.terminate_child(Explorer.Supervisor, Explorer.Chain.Cache.BlockNumber.child_id())
+      Supervisor.restart_child(Explorer.Supervisor, Explorer.Chain.Cache.BlockNumber.child_id())
 
       %{params: %{"module" => "account", "action" => "listaccounts"}}
     end
@@ -134,78 +137,41 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
 
     test "with a stale balance", %{conn: conn, params: params} do
       now = Timex.now()
+      latest_block_number = 302
 
       mining_address =
         insert(:address,
           fetched_coin_balance: 0,
-          fetched_coin_balance_block_number: 103,
+          fetched_coin_balance_block_number: latest_block_number,
           inserted_at: Timex.shift(now, minutes: -10)
         )
 
       mining_address_hash = to_string(mining_address.hash)
-      # we space these very far apart so that we know it will consider the 0th block stale (it calculates how far
-      # back we'd need to go to get 24 hours in the past)
-      Enum.each(0..101, fn i ->
-        insert(:block, number: i, timestamp: Timex.shift(now, hours: -(103 - i) * 25), miner: mining_address)
+
+      Enum.each(0..301, fn i ->
+        insert(:block,
+          number: i,
+          timestamp: Timex.shift(now, minutes: -25 * 60 - (latest_block_number - i)),
+          miner: mining_address
+        )
       end)
 
-      insert(:block, number: 102, timestamp: Timex.shift(now, hours: -25), miner: mining_address)
+      insert(:block, number: latest_block_number, timestamp: Timex.shift(now, hours: -25), miner: mining_address)
       AverageBlockTime.refresh()
 
       address =
         insert(:address,
           fetched_coin_balance: 100,
-          fetched_coin_balance_block_number: 101,
+          # more than 1 hour ago, so should be stale
+          fetched_coin_balance_block_number: 240,
           inserted_at: Timex.shift(now, minutes: -5)
         )
 
       address_hash = to_string(address.hash)
 
-      expect(EthereumJSONRPC.Mox, :json_rpc, 1, fn [
-                                                     %{
-                                                       id: id,
-                                                       method: "eth_getBalance",
-                                                       params: [^address_hash, "0x66"]
-                                                     }
-                                                   ],
-                                                   _options ->
-        {:ok, [%{id: id, jsonrpc: "2.0", result: "0x02"}]}
-      end)
+      latest_block_number_hex = "0x" <> Integer.to_string(latest_block_number, 16)
 
-      res = eth_block_number_fake_response("0x66")
-
-      expect(EthereumJSONRPC.Mox, :json_rpc, 1, fn [
-                                                     %{
-                                                       id: 0,
-                                                       method: "eth_getBlockByNumber",
-                                                       params: ["0x66", true]
-                                                     }
-                                                   ],
-                                                   _ ->
-        {:ok, [res]}
-      end)
-
-      expect(EthereumJSONRPC.Mox, :json_rpc, 1, fn [
-                                                     %{
-                                                       id: id,
-                                                       method: "eth_getBalance",
-                                                       params: [^mining_address_hash, "0x66"]
-                                                     }
-                                                   ],
-                                                   _options ->
-        {:ok, [%{id: id, jsonrpc: "2.0", result: "0x02"}]}
-      end)
-
-      expect(EthereumJSONRPC.Mox, :json_rpc, 1, fn [
-                                                     %{
-                                                       id: 0,
-                                                       method: "eth_getBlockByNumber",
-                                                       params: ["0x66", true]
-                                                     }
-                                                   ],
-                                                   _ ->
-        {:ok, [res]}
-      end)
+      TestHelper.eth_get_balance_expectation(address_hash, latest_block_number_hex, "0x02")
 
       response =
         conn
@@ -238,7 +204,7 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
 
       assert received_address.hash == address.hash
       assert received_address.fetched_coin_balance == expected_wei
-      assert received_address.fetched_coin_balance_block_number == 102
+      assert received_address.fetched_coin_balance_block_number == latest_block_number
     end
   end
 
@@ -1863,12 +1829,11 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 0,
         value: 1,
         from_address: address,
         to_address: address_2,
-        block_hash: transaction.block_hash,
-        block_index: 0,
         block_number: block.number
       )
 
@@ -1876,12 +1841,11 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 1,
           value: 2,
           from_address: address,
           to_address: address_2,
-          block_hash: transaction.block_hash,
-          block_index: 1,
           block_number: block.number
         )
 
@@ -1889,8 +1853,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{transaction.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction.from_address_hash}",
-          "to" => "#{internal_transaction.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.to_address_id)}",
           "value" => "#{internal_transaction.value.value}",
           "contractAddress" => "",
           "input" => "#{internal_transaction.input}",
@@ -1916,6 +1880,72 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       assert :ok = ExJsonSchema.Validator.validate(txlistinternal_schema(), response)
     end
 
+    test "returns status = 2 for internal transactions not yet processed", %{conn: conn, params: params} do
+      address = insert(:address)
+      address_2 = insert(:address)
+
+      block = insert(:block)
+      insert(:pending_block_operation, block_hash: block.hash, block_number: block.number)
+
+      transaction =
+        :transaction
+        |> insert(from_address: address, to_address: address_2)
+        |> with_block(block)
+
+      :internal_transaction
+      |> insert(
+        transaction: transaction,
+        transaction_index: transaction.index,
+        index: 0,
+        value: 1,
+        from_address: address,
+        to_address: address_2,
+        block_number: block.number
+      )
+
+      internal_transaction =
+        :internal_transaction
+        |> insert(
+          transaction: transaction,
+          transaction_index: transaction.index,
+          index: 1,
+          value: 2,
+          from_address: address,
+          to_address: address_2,
+          block_number: block.number
+        )
+
+      expected_result = [
+        %{
+          "blockNumber" => "#{transaction.block_number}",
+          "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.to_address_id)}",
+          "value" => "#{internal_transaction.value.value}",
+          "contractAddress" => "",
+          "input" => "#{internal_transaction.input}",
+          "type" => "#{internal_transaction.type}",
+          "callType" => "#{internal_transaction.call_type}",
+          "gas" => "#{internal_transaction.gas}",
+          "gasUsed" => "#{internal_transaction.gas_used}",
+          "index" => "#{internal_transaction.index}",
+          "transactionHash" => "#{transaction.hash}",
+          "isError" => "0",
+          "errCode" => "#{internal_transaction.error}"
+        }
+      ]
+
+      assert response =
+               conn
+               |> get("/api/v1", params)
+               |> json_response(200)
+
+      assert response["result"] == expected_result
+      assert response["status"] == "2"
+      assert response["message"] == "Some internal transactions within this block range have not yet been processed"
+      assert :ok = ExJsonSchema.Validator.validate(txlistinternal_schema(), response)
+    end
+
     test "returns only non zero value internal transactions by default", %{conn: conn, params: params} do
       address = insert(:address)
       address_2 = insert(:address)
@@ -1930,24 +1960,22 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 0,
         value: 1,
         from_address: address,
         to_address: address_2,
-        block_hash: transaction.block_hash,
-        block_index: 0,
         block_number: block.number
       )
 
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 2,
         value: 0,
         from_address: address,
         to_address: address_2,
-        block_hash: transaction.block_hash,
-        block_index: 2,
         block_number: block.number
       )
 
@@ -1955,12 +1983,11 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 1,
           value: 2,
           from_address: address,
           to_address: address_2,
-          block_hash: transaction.block_hash,
-          block_index: 1,
           block_number: block.number
         )
 
@@ -1968,8 +1995,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{transaction.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction.from_address_hash}",
-          "to" => "#{internal_transaction.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.to_address_id)}",
           "value" => "#{internal_transaction.value.value}",
           "contractAddress" => "",
           "input" => "#{internal_transaction.input}",
@@ -2012,12 +2039,11 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 0,
         value: 1,
         from_address: address,
         to_address: address_2,
-        block_hash: transaction.block_hash,
-        block_index: 0,
         block_number: block.number
       )
 
@@ -2025,12 +2051,11 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 1,
           value: 2,
           from_address: address,
           to_address: address_2,
-          block_hash: transaction.block_hash,
-          block_index: 1,
           block_number: block.number
         )
 
@@ -2038,12 +2063,11 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 2,
           value: 0,
           from_address: address,
           to_address: address_2,
-          block_hash: transaction.block_hash,
-          block_index: 2,
           block_number: block.number
         )
 
@@ -2051,8 +2075,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{transaction.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction_b.from_address_hash}",
-          "to" => "#{internal_transaction_b.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_b.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_b.to_address_id)}",
           "value" => "#{internal_transaction_b.value.value}",
           "contractAddress" => "",
           "input" => "#{internal_transaction_b.input}",
@@ -2068,8 +2092,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{internal_transaction_a.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction_a.from_address_hash}",
-          "to" => "#{internal_transaction_a.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_a.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_a.to_address_id)}",
           "value" => "#{internal_transaction_a.value.value}",
           "contractAddress" => "",
           "input" => "#{internal_transaction_a.input}",
@@ -2150,13 +2174,14 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction_create
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 0,
           value: 1,
           from_address: address,
-          block_hash: transaction.block_hash,
-          block_index: 0
+          created_contract_code: contract_address.contract_code,
+          created_contract_address: contract_address,
+          block_number: transaction.block_number
         )
-        |> with_contract_creation(contract_address)
 
       params = %{
         "module" => "account",
@@ -2168,8 +2193,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{transaction.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction.from_address_hash}",
-          "to" => "#{internal_transaction.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.to_address_id)}",
           "value" => "#{internal_transaction.value.value}",
           "contractAddress" => "#{contract_address.hash}",
           "input" => "",
@@ -2195,6 +2220,51 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       assert :ok = ExJsonSchema.Validator.validate(txlistinternal_schema(), response)
     end
 
+    test "status = 2 if the block is pending", %{conn: conn} do
+      address = insert(:address)
+      contract_address = insert(:contract_address)
+
+      block = insert(:block)
+      insert(:pending_block_operation, block_hash: block.hash, block_number: block.number)
+
+      transaction =
+        :transaction
+        |> insert(from_address: address, to_address: nil)
+        |> with_contract_creation(contract_address)
+        |> with_block(block)
+
+      _internal_transaction =
+        :internal_transaction_create
+        |> insert(
+          transaction: transaction,
+          transaction_index: transaction.index,
+          index: 0,
+          value: 1,
+          from_address: address,
+          created_contract_code: contract_address.contract_code,
+          created_contract_address: contract_address,
+          block_number: transaction.block_number
+        )
+
+      params = %{
+        "module" => "account",
+        "action" => "txlistinternal",
+        "txhash" => "#{transaction.hash}"
+      }
+
+      expected_result = []
+
+      assert response =
+               conn
+               |> get("/api", params)
+               |> json_response(200)
+
+      assert response["result"] == expected_result
+      assert response["status"] == "2"
+      assert response["message"] == "Internal transactions for this transaction have not been processed yet"
+      assert :ok = ExJsonSchema.Validator.validate(txlistinternal_schema(), response)
+    end
+
     test "isError is true if internal transaction has an error", %{conn: conn} do
       transaction =
         :transaction
@@ -2203,12 +2273,12 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
 
       internal_transaction_details = [
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 0,
         value: 1,
         type: :reward,
         error: "some error",
-        block_hash: transaction.block_hash,
-        block_index: 0
+        block_number: transaction.block_number
       ]
 
       insert(:internal_transaction_create, internal_transaction_details)
@@ -2240,9 +2310,9 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       for index <- 0..2 do
         insert(:internal_transaction_create,
           transaction: transaction,
+          transaction_index: transaction.index,
           index: index,
-          block_hash: transaction.block_hash,
-          block_index: index,
+          block_number: transaction.block_number,
           value: 1
         )
       end
@@ -2276,20 +2346,18 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 0,
         value: 1,
-        block_hash: transaction.block_hash,
-        block_index: 0,
         block_number: block.number
       )
 
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 2,
         value: 0,
-        block_hash: transaction.block_hash,
-        block_index: 2,
         block_number: block.number
       )
 
@@ -2297,10 +2365,9 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 1,
           value: 2,
-          block_hash: transaction.block_hash,
-          block_index: 1,
           block_number: block.number
         )
 
@@ -2308,8 +2375,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{transaction.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction.from_address_hash}",
-          "to" => "#{internal_transaction.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.to_address_id)}",
           "value" => "#{internal_transaction.value.value}",
           "contractAddress" => "",
           "input" => "#{internal_transaction.input}",
@@ -2352,10 +2419,9 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 0,
         value: 1,
-        block_hash: transaction.block_hash,
-        block_index: 0,
         block_number: block.number
       )
 
@@ -2363,10 +2429,9 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 1,
           value: 2,
-          block_hash: transaction.block_hash,
-          block_index: 1,
           block_number: block.number
         )
 
@@ -2374,36 +2439,18 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 2,
           value: 0,
-          block_hash: transaction.block_hash,
-          block_index: 2,
           block_number: block.number
         )
 
       expected_result = [
         %{
-          "blockNumber" => "#{transaction.block_number}",
-          "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction_a.from_address_hash}",
-          "to" => "#{internal_transaction_a.to_address_hash}",
-          "value" => "#{internal_transaction_a.value.value}",
-          "contractAddress" => "",
-          "input" => "#{internal_transaction_a.input}",
-          "type" => "#{internal_transaction_a.type}",
-          "callType" => "#{internal_transaction_a.call_type}",
-          "gas" => "#{internal_transaction_a.gas}",
-          "gasUsed" => "#{internal_transaction_a.gas_used}",
-          "index" => "#{internal_transaction_a.index}",
-          "transactionHash" => "#{transaction.hash}",
-          "isError" => "0",
-          "errCode" => "#{internal_transaction_a.error}"
-        },
-        %{
           "blockNumber" => "#{internal_transaction_b.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction_b.from_address_hash}",
-          "to" => "#{internal_transaction_b.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_b.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_b.to_address_id)}",
           "value" => "#{internal_transaction_b.value.value}",
           "contractAddress" => "",
           "input" => "#{internal_transaction_b.input}",
@@ -2415,6 +2462,23 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
           "transactionHash" => "#{transaction.hash}",
           "isError" => "0",
           "errCode" => "#{internal_transaction_b.error}"
+        },
+        %{
+          "blockNumber" => "#{transaction.block_number}",
+          "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_a.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_a.to_address_id)}",
+          "value" => "#{internal_transaction_a.value.value}",
+          "contractAddress" => "",
+          "input" => "#{internal_transaction_a.input}",
+          "type" => "#{internal_transaction_a.type}",
+          "callType" => "#{internal_transaction_a.call_type}",
+          "gas" => "#{internal_transaction_a.gas}",
+          "gasUsed" => "#{internal_transaction_a.gas_used}",
+          "index" => "#{internal_transaction_a.index}",
+          "transactionHash" => "#{transaction.hash}",
+          "isError" => "0",
+          "errCode" => "#{internal_transaction_a.error}"
         }
       ]
 
@@ -2434,6 +2498,84 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       assert response["status"] == "1"
       assert response["message"] == "OK"
       assert :ok = ExJsonSchema.Validator.validate(txlistinternal_schema(), response)
+    end
+
+    if Application.compile_env(:explorer, :chain_type) not in [:rsk, :filecoin] do
+      test "via on-demand fetcher", %{conn: conn} do
+        original_config = Application.get_env(:explorer, Explorer.Migrator.DeleteZeroValueInternalTransactions)
+
+        Application.put_env(:explorer, Explorer.Migrator.DeleteZeroValueInternalTransactions,
+          enabled: true,
+          storage_period: 0
+        )
+
+        on_exit(fn ->
+          Application.put_env(:explorer, Explorer.Migrator.DeleteZeroValueInternalTransactions, original_config)
+        end)
+
+        transaction = :transaction |> insert() |> with_block()
+
+        expect(EthereumJSONRPC.Mox, :json_rpc, 1, fn
+          [%{id: id, params: _}], _ ->
+            {:ok,
+             [
+               %{
+                 id: id,
+                 result: %{
+                   "type" => "create",
+                   "from" => "0x117b358218da5a4f647072ddb50ded038ed63d17",
+                   "to" => "0x205a6b72ce16736c9d87172568a9c0cb9304de0d",
+                   "value" => "0x0",
+                   "gas" => "0x106f5",
+                   "gasUsed" => "0x106f5",
+                   "input" =>
+                     "0x608060405234801561001057600080fd5b50610150806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80632e64cec11461003b5780636057361d14610059575b600080fd5b610043610075565b60405161005091906100d9565b60405180910390f35b610073600480360381019061006e919061009d565b61007e565b005b60008054905090565b8060008190555050565b60008135905061009781610103565b92915050565b6000602082840312156100b3576100b26100fe565b5b60006100c184828501610088565b91505092915050565b6100d3816100f4565b82525050565b60006020820190506100ee60008301846100ca565b92915050565b6000819050919050565b600080fd5b61010c816100f4565b811461011757600080fd5b5056fea26469706673582212209a159a4f3847890f10bfb87871a61eba91c5dbf5ee3cf6398207e292eee22a1664736f6c63430008070033",
+                   "output" =>
+                     "0x608060405234801561001057600080fd5b50600436106100365760003560e01c80632e64cec11461003b5780636057361d14610059575b600080fd5b610043610075565b60405161005091906100d9565b60405180910390f35b610073600480360381019061006e919061009d565b61007e565b005b60008054905090565b8060008190555050565b60008135905061009781610103565b92915050565b6000602082840312156100b3576100b26100fe565b5b60006100c184828501610088565b91505092915050565b6100d3816100f4565b82525050565b60006020820190506100ee60008301846100ca565b92915050565b6000819050919050565b600080fd5b61010c816100f4565b811461011757600080fd5b5056fea26469706673582212209a159a4f3847890f10bfb87871a61eba91c5dbf5ee3cf6398207e292eee22a1664736f6c63430008070033"
+                 }
+               }
+             ]}
+        end)
+
+        Application.put_env(:ethereum_jsonrpc, EthereumJSONRPC.Geth, tracer: "call_tracer", debug_trace_timeout: "5s")
+
+        expected_result = [
+          %{
+            "blockNumber" => "#{transaction.block_number}",
+            "callType" => "",
+            "contractAddress" => "0x205a6b72ce16736c9d87172568a9c0cb9304de0d",
+            "errCode" => "",
+            "from" => "0x117b358218da5a4f647072ddb50ded038ed63d17",
+            "gas" => "67317",
+            "gasUsed" => "67317",
+            "index" => "0",
+            "input" => "",
+            "isError" => "0",
+            "timeStamp" => "#{DateTime.to_unix(transaction.block.timestamp)}",
+            "to" => "",
+            "transactionHash" => "#{transaction.hash}",
+            "type" => "create",
+            "value" => "0"
+          }
+        ]
+
+        params = %{
+          "module" => "account",
+          "action" => "txlistinternal",
+          "txhash" => "#{transaction.hash}",
+          "include_zero_value" => "true"
+        }
+
+        assert response =
+                 conn
+                 |> get("/api/v1", params)
+                 |> json_response(200)
+
+        assert response["result"] == expected_result
+        assert response["status"] == "1"
+        assert response["message"] == "OK"
+        assert :ok = ExJsonSchema.Validator.validate(txlistinternal_schema(), response)
+      end
     end
   end
 
@@ -2475,6 +2617,22 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       assert :ok = ExJsonSchema.Validator.validate(txlistinternal_schema(), response)
     end
 
+    test "doesn't raise when startblock exceeds postgres integer range", %{conn: conn} do
+      address = insert(:address)
+
+      params = %{
+        "module" => "account",
+        "action" => "txlistinternal",
+        "address" => "#{address.hash}",
+        "startblock" => "2147483648",
+        "endblock" => "7483099"
+      }
+
+      conn
+      |> get("/api", params)
+      |> json_response(200)
+    end
+
     test "response includes all the expected fields", %{conn: conn} do
       address = insert(:address)
       contract_address = insert(:contract_address)
@@ -2491,13 +2649,13 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction_create
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 0,
           from_address: address,
-          block_number: block.number,
-          block_hash: transaction.block_hash,
-          block_index: 0
+          created_contract_code: contract_address.contract_code,
+          created_contract_address: contract_address,
+          block_number: block.number
         )
-        |> with_contract_creation(contract_address)
 
       params = %{
         "module" => "account",
@@ -2509,8 +2667,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{transaction.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction.from_address_hash}",
-          "to" => "#{internal_transaction.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.to_address_id)}",
           "value" => "#{internal_transaction.value.value}",
           "contractAddress" => "#{contract_address.hash}",
           "input" => "",
@@ -2547,12 +2705,11 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       internal_transaction_details = [
         from_address: address,
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 0,
         type: :reward,
         error: "some error",
-        block_number: transaction.block_number,
-        block_hash: transaction.block_hash,
-        block_index: 0
+        block_number: transaction.block_number
       ]
 
       insert(:internal_transaction_create, internal_transaction_details)
@@ -2587,10 +2744,9 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         internal_transaction_details = %{
           from_address: address,
           transaction: transaction,
+          transaction_index: transaction.index,
           index: index,
           block_number: transaction.block_number,
-          block_hash: transaction.block_hash,
-          block_index: index,
           value: 1
         }
 
@@ -2628,22 +2784,20 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 0,
         value: 1,
         from_address: address,
-        block_hash: transaction.block_hash,
-        block_index: 0,
         block_number: block.number
       )
 
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 2,
         value: 0,
         from_address: address,
-        block_hash: transaction.block_hash,
-        block_index: 2,
         block_number: block.number
       )
 
@@ -2651,11 +2805,10 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 1,
           value: 2,
           from_address: address,
-          block_hash: transaction.block_hash,
-          block_index: 1,
           block_number: block.number
         )
 
@@ -2663,8 +2816,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{transaction.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction.from_address_hash}",
-          "to" => "#{internal_transaction.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction.to_address_id)}",
           "value" => "#{internal_transaction.value.value}",
           "contractAddress" => "",
           "input" => "#{internal_transaction.input}",
@@ -2709,11 +2862,10 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
       :internal_transaction
       |> insert(
         transaction: transaction,
+        transaction_index: transaction.index,
         index: 0,
         value: 1,
         from_address: address,
-        block_hash: transaction.block_hash,
-        block_index: 0,
         block_number: block.number
       )
 
@@ -2721,11 +2873,10 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 1,
           value: 2,
           from_address: address,
-          block_hash: transaction.block_hash,
-          block_index: 1,
           block_number: block.number
         )
 
@@ -2733,11 +2884,10 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         :internal_transaction
         |> insert(
           transaction: transaction,
+          transaction_index: transaction.index,
           index: 2,
           value: 0,
           from_address: address,
-          block_hash: transaction.block_hash,
-          block_index: 2,
           block_number: block.number
         )
 
@@ -2745,8 +2895,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{transaction.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction_b.from_address_hash}",
-          "to" => "#{internal_transaction_b.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_b.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_b.to_address_id)}",
           "value" => "#{internal_transaction_b.value.value}",
           "contractAddress" => "",
           "input" => "#{internal_transaction_b.input}",
@@ -2762,8 +2912,8 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
         %{
           "blockNumber" => "#{internal_transaction_a.block_number}",
           "timeStamp" => "#{DateTime.to_unix(block.timestamp)}",
-          "from" => "#{internal_transaction_a.from_address_hash}",
-          "to" => "#{internal_transaction_a.to_address_hash}",
+          "from" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_a.from_address_id)}",
+          "to" => "#{AddressIdToAddressHash.id_to_hash(internal_transaction_a.to_address_id)}",
           "value" => "#{internal_transaction_a.value.value}",
           "contractAddress" => "",
           "input" => "#{internal_transaction_a.input}",
@@ -2911,6 +3061,68 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
                |> json_response(200)
 
       assert :ok = ExJsonSchema.Validator.validate(tokentx_schema(), response)
+    end
+
+    test "returns ERC-7984 transfers with confidential amounts", %{conn: conn} do
+      transaction =
+        %{block: block} =
+        :transaction
+        |> insert()
+        |> with_block()
+
+      erc7984_token = insert(:token, %{type: "ERC-7984"})
+
+      token_transfer =
+        insert(:token_transfer,
+          block: transaction.block,
+          transaction: transaction,
+          block_number: block.number,
+          token_contract_address: erc7984_token.contract_address,
+          token_type: "ERC-7984",
+          amount: nil
+        )
+
+      params = %{
+        "module" => "account",
+        "action" => "token7984tx",
+        "address" => to_string(token_transfer.from_address.hash)
+      }
+
+      expected_result = [
+        %{
+          "blockNumber" => to_string(transaction.block_number),
+          "timeStamp" => to_string(DateTime.to_unix(block.timestamp)),
+          "hash" => to_string(token_transfer.transaction_hash),
+          "nonce" => to_string(transaction.nonce),
+          "blockHash" => to_string(block.hash),
+          "from" => to_string(token_transfer.from_address_hash),
+          "contractAddress" => to_string(token_transfer.token_contract_address_hash),
+          "to" => to_string(token_transfer.to_address_hash),
+          "value" => nil,
+          "tokenName" => erc7984_token.name,
+          "tokenSymbol" => erc7984_token.symbol,
+          "tokenDecimal" => to_string(erc7984_token.decimals),
+          "transactionIndex" => to_string(transaction.index),
+          "gas" => to_string(transaction.gas),
+          "gasPrice" => to_string(transaction.gas_price.value),
+          "gasUsed" => to_string(transaction.gas_used),
+          "cumulativeGasUsed" => to_string(transaction.cumulative_gas_used),
+          "input" => to_string(transaction.input),
+          "confirmations" => "0",
+          "functionName" => "",
+          "methodId" => ""
+        }
+      ]
+
+      assert response =
+               conn
+               |> get("/api", params)
+               |> json_response(200)
+
+      assert response["result"] == expected_result
+      assert response["status"] == "1"
+      assert response["message"] == "OK"
+      assert :ok = ExJsonSchema.Validator.validate(token7984tx_schema(), response)
     end
 
     test "returns all the required fields", %{conn: conn} do
@@ -4968,6 +5180,38 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
     })
   end
 
+  defp token7984tx_schema do
+    resolve_schema(%{
+      "type" => ["array", "null"],
+      "items" => %{
+        "type" => "object",
+        "properties" => %{
+          "blockNumber" => %{"type" => "string"},
+          "timeStamp" => %{"type" => "string"},
+          "hash" => %{"type" => "string"},
+          "nonce" => %{"type" => "string"},
+          "blockHash" => %{"type" => "string"},
+          "from" => %{"type" => "string"},
+          "contractAddress" => %{"type" => "string"},
+          "to" => %{"type" => "string"},
+          "logIndex" => %{"type" => "string"},
+          "value" => %{"type" => "null"},
+          "tokenName" => %{"type" => "string"},
+          "tokenID" => %{"type" => "string"},
+          "tokenSymbol" => %{"type" => "string"},
+          "tokenDecimal" => %{"type" => "string"},
+          "transactionIndex" => %{"type" => "string"},
+          "gas" => %{"type" => "string"},
+          "gasPrice" => %{"type" => "string"},
+          "gasUsed" => %{"type" => "string"},
+          "cumulativeGasUsed" => %{"type" => "string"},
+          "input" => %{"type" => "string"},
+          "confirmations" => %{"type" => "string"}
+        }
+      }
+    })
+  end
+
   defp tokenbalance_schema, do: resolve_schema(%{"type" => ["string", "null"]})
 
   defp tokenlist_schema do
@@ -5011,41 +5255,5 @@ defmodule BlockScoutWeb.API.RPC.AddressControllerTest do
     }
     |> put_in(["properties", "result"], result)
     |> ExJsonSchema.Schema.resolve()
-  end
-
-  defp eth_block_number_fake_response(block_quantity) do
-    %{
-      id: 0,
-      jsonrpc: "2.0",
-      result: %{
-        "author" => "0x0000000000000000000000000000000000000000",
-        "difficulty" => "0x20000",
-        "extraData" => "0x",
-        "gasLimit" => "0x663be0",
-        "gasUsed" => "0x0",
-        "hash" => "0x5b28c1bfd3a15230c9a46b399cd0f9a6920d432e85381cc6a140b06e8410112f",
-        "logsBloom" =>
-          "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-        "miner" => "0x0000000000000000000000000000000000000000",
-        "number" => block_quantity,
-        "parentHash" => "0x0000000000000000000000000000000000000000000000000000000000000000",
-        "receiptsRoot" => "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-        "sealFields" => [
-          "0x80",
-          "0xb8410000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-        ],
-        "sha3Uncles" => "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-        "signature" =>
-          "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-        "size" => "0x215",
-        "stateRoot" => "0xfad4af258fd11939fae0c6c6eec9d340b1caac0b0196fd9a1bc3f489c5bf00b3",
-        "step" => "0",
-        "timestamp" => "0x0",
-        "totalDifficulty" => "0x20000",
-        "transactions" => [],
-        "transactionsRoot" => "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-        "uncles" => []
-      }
-    }
   end
 end

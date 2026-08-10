@@ -1,5 +1,7 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.API.V2.OptimismController do
   use BlockScoutWeb, :controller
+  use OpenApiSpex.ControllerSpecs
 
   require Logger
 
@@ -12,8 +14,9 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
 
   import Explorer.Helper, only: [hash_to_binary: 1]
 
-  alias BlockScoutWeb.API.V2.ApiView
-  alias Explorer.Chain
+  alias BlockScoutWeb.API.V2.{ApiView, OptimismView}
+  alias BlockScoutWeb.Schemas.API.V2.ErrorResponses.NotFoundResponse
+  alias Explorer.{Chain, PagingOptions}
   alias Explorer.Chain.Cache.ChainId
   alias Explorer.Chain.{Data, Hash, Token, Transaction}
 
@@ -32,43 +35,37 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
 
   action_fallback(BlockScoutWeb.API.V2.FallbackController)
 
+  plug(OpenApiSpex.Plug.CastAndValidate, json_render_error_v2: true)
+
+  tags(["optimism"])
+
   @api_true [api?: true]
 
-  @doc """
-    Function to handle GET requests to `/api/v2/optimism/txn-batches` and
-    `/api/v2/optimism/txn-batches/:l2_block_range_start/:l2_block_range_end` endpoints.
-  """
-  @spec transaction_batches(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def transaction_batches(conn, params) do
-    {batches, next_page} =
-      params
-      |> paging_options()
-      |> Keyword.put(:api?, true)
-      |> Keyword.put(:l2_block_range_start, Map.get(params, "l2_block_range_start"))
-      |> Keyword.put(:l2_block_range_end, Map.get(params, "l2_block_range_end"))
-      |> TransactionBatch.list()
-      |> split_list_by_page()
-
-    next_page_params = next_page_params(next_page, batches, params)
-
-    conn
-    |> put_status(200)
-    |> render(:optimism_transaction_batches, %{
-      batches: batches,
-      next_page_params: next_page_params
-    })
-  end
+  operation :batches,
+    summary: "List batches.",
+    description: "Retrieves a paginated list of batches.",
+    parameters:
+      base_params() ++
+        define_paging_params([
+          "id",
+          "items_count"
+        ]),
+    responses: [
+      ok:
+        {"List of batches.", "application/json",
+         paginated_response(
+           items: Schemas.Optimism.Batch,
+           next_page_params_example: %{
+             "id" => 394_591,
+             "items_count" => 50
+           },
+           title_prefix: "Batches"
+         )},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
 
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/txn-batches/count` endpoint.
-  """
-  @spec transaction_batches_count(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def transaction_batches_count(conn, _params) do
-    items_count(conn, TransactionBatch)
-  end
-
-  @doc """
-    Function to handle GET requests to `/api/v2/optimism/batches` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/batches` endpoint.
   """
   @spec batches(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def batches(conn, params) do
@@ -86,8 +83,8 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
       batches
       |> Enum.map(fn fs ->
         Task.async(fn ->
-          l2_block_number_from = TransactionBatch.edge_l2_block_number(fs.id, :min)
-          l2_block_number_to = TransactionBatch.edge_l2_block_number(fs.id, :max)
+          l2_block_number_from = TransactionBatch.edge_l2_block_number(fs.id, :min, @api_true)
+          l2_block_number_to = TransactionBatch.edge_l2_block_number(fs.id, :max, @api_true)
 
           l2_block_range =
             if not is_nil(l2_block_number_from) and not is_nil(l2_block_number_to) do
@@ -121,19 +118,55 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     })
   end
 
+  operation :batches_count,
+    summary: "Number of batches in the list.",
+    description: "Retrieves a size of the batch list.",
+    parameters: base_params(),
+    responses: [
+      ok: {"Number of items in the batch list.", "application/json", %Schema{type: :integer, nullable: false}},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/batches/count` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/batches/count` endpoint.
   """
   @spec batches_count(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def batches_count(conn, _params) do
     items_count(conn, FrameSequence)
   end
 
+  operation :batch_by_celestia_blob,
+    summary: "Batch by celestia blob.",
+    description: "Retrieves batch detailed info by the given celestia blob metadata (height and commitment).",
+    parameters:
+      base_params() ++
+        [
+          %OpenApiSpex.Parameter{
+            name: :height,
+            in: :path,
+            schema: Schemas.General.IntegerString,
+            required: true,
+            description: "Celestia blob height in the path."
+          },
+          %OpenApiSpex.Parameter{
+            name: :commitment,
+            in: :path,
+            schema: Schemas.General.HexString,
+            required: true,
+            description: "Celestia blob commitment in the path."
+          }
+        ],
+    responses: [
+      ok: {"Batch detailed info.", "application/json", Schemas.Optimism.Batch.Detailed},
+      unprocessable_entity: JsonErrorResponse.response(),
+      not_found: NotFoundResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/batches/da/celestia/:height/:commitment` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/batches/da/celestia/:height/:commitment` endpoint.
   """
   @spec batch_by_celestia_blob(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def batch_by_celestia_blob(conn, %{"height" => height, "commitment" => commitment}) do
+  def batch_by_celestia_blob(conn, %{height: height, commitment: commitment}) do
     {height, ""} = Integer.parse(height)
 
     commitment =
@@ -154,11 +187,30 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     end
   end
 
+  operation :batch_by_number,
+    summary: "Batch by its number.",
+    description: "Retrieves batch detailed info by the given number.",
+    parameters: [
+      %OpenApiSpex.Parameter{
+        name: :number,
+        in: :path,
+        schema: Schemas.General.IntegerString,
+        required: true,
+        description: "Batch number in the path."
+      }
+      | base_params()
+    ],
+    responses: [
+      ok: {"Batch detailed info.", "application/json", Schemas.Optimism.Batch.Detailed},
+      unprocessable_entity: JsonErrorResponse.response(),
+      not_found: NotFoundResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/batches/:number` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/batches/:number` endpoint.
   """
   @spec batch_by_number(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def batch_by_number(conn, %{"number" => number}) do
+  def batch_by_number(conn, %{number: number}) do
     {number, ""} = Integer.parse(number)
 
     batch = FrameSequence.batch_by_number(number, api?: true)
@@ -172,8 +224,31 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     end
   end
 
+  operation :output_roots,
+    summary: "List output roots.",
+    description: "Retrieves a paginated list of output roots.",
+    parameters:
+      base_params() ++
+        define_paging_params([
+          "index",
+          "items_count"
+        ]),
+    responses: [
+      ok:
+        {"List of output roots.", "application/json",
+         paginated_response(
+           items: Schemas.Optimism.OutputRoot,
+           next_page_params_example: %{
+             "index" => 8829,
+             "items_count" => 50
+           },
+           title_prefix: "OutputRoots"
+         )},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/output-roots` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/output-roots` endpoint.
   """
   @spec output_roots(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def output_roots(conn, params) do
@@ -194,16 +269,48 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     })
   end
 
+  operation :output_roots_count,
+    summary: "Number of output roots in the list.",
+    description: "Retrieves a size of the output roots list.",
+    parameters: base_params(),
+    responses: [
+      ok: {"Number of items in the output roots list.", "application/json", %Schema{type: :integer, nullable: false}},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/output-roots/count` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/output-roots/count` endpoint.
   """
   @spec output_roots_count(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def output_roots_count(conn, _params) do
     items_count(conn, OutputRoot)
   end
 
+  operation :games,
+    summary: "List games.",
+    description: "Retrieves a paginated list of games.",
+    parameters:
+      base_params() ++
+        define_paging_params([
+          "index",
+          "items_count"
+        ]),
+    responses: [
+      ok:
+        {"List of games.", "application/json",
+         paginated_response(
+           items: Schemas.Optimism.Game,
+           next_page_params_example: %{
+             "index" => 12967,
+             "items_count" => 50
+           },
+           title_prefix: "Games"
+         )},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/games` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/games` endpoint.
   """
   @spec games(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def games(conn, params) do
@@ -224,8 +331,17 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     })
   end
 
+  operation :games_count,
+    summary: "Number of games in the list.",
+    description: "Retrieves a size of the games list.",
+    parameters: base_params(),
+    responses: [
+      ok: {"Number of items in the games list.", "application/json", %Schema{type: :integer, nullable: false}},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/games/count` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/games/count` endpoint.
   """
   @spec games_count(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def games_count(conn, _params) do
@@ -236,8 +352,33 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     |> render(:optimism_items_count, %{count: count})
   end
 
+  operation :deposits,
+    summary: "List deposits.",
+    description: "Retrieves a paginated list of deposits.",
+    parameters:
+      base_params() ++
+        define_paging_params([
+          "items_count",
+          "l1_block_number",
+          "transaction_hash"
+        ]),
+    responses: [
+      ok:
+        {"List of deposits.", "application/json",
+         paginated_response(
+           items: Schemas.Optimism.Deposit,
+           next_page_params_example: %{
+             "items_count" => 50,
+             "l1_block_number" => 23_937_283,
+             "transaction_hash" => "0x5dc155c382d95353c5876e735d675d284e3b29b1379e5859dc35cfd4a1dd5188"
+           },
+           title_prefix: "Deposits"
+         )},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/deposits` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/deposits` endpoint.
   """
   @spec deposits(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def deposits(conn, params) do
@@ -258,16 +399,59 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     })
   end
 
+  operation :main_page_deposits,
+    summary: "List deposits on the main page.",
+    description: "Retrieves a list of deposits for the main page.",
+    parameters: base_params(),
+    responses: [
+      ok:
+        {"List of deposits on the main page.", "application/json",
+         %Schema{type: :array, items: Schemas.Optimism.Deposit.MainPage, nullable: false}},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/deposits/count` endpoint.
+  Function to handle GET requests to `/api/v2/main-page/optimism-deposits` endpoint.
+  """
+  @spec main_page_deposits(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def main_page_deposits(conn, _params) do
+    recent_deposits =
+      Deposit.list(
+        paging_options: %PagingOptions{page_size: 6},
+        api?: true
+      )
+
+    conn
+    |> put_status(200)
+    |> put_view(OptimismView)
+    |> render(:optimism_deposits, %{deposits: recent_deposits})
+  end
+
+  operation :deposits_count,
+    summary: "Number of deposits in the list.",
+    description: "Retrieves a size of the deposits list.",
+    parameters: base_params(),
+    responses: [
+      ok: {"Number of items in the deposits list.", "application/json", %Schema{type: :integer, nullable: false}},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
+  @doc """
+  Function to handle GET requests to `/api/v2/optimism/deposits/count` endpoint.
   """
   @spec deposits_count(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def deposits_count(conn, _params) do
-    items_count(conn, Deposit)
+    count = Deposit.count(@api_true)
+
+    conn
+    |> put_status(200)
+    |> render(:optimism_items_count, %{count: count})
   end
 
+  operation :interop_message, false
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/interop/messages/:unique_id` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/interop/messages/:unique_id` endpoint.
   """
   @spec interop_message(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def interop_message(conn, params) do
@@ -279,11 +463,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
          {nonce, ""} <- Integer.parse(nonce_string, 16),
          msg = InteropMessage.get_message(init_chain_id, nonce),
          false <- is_nil(msg) do
-      current_chain_id =
-        case ChainId.get_id() do
-          nil -> Application.get_env(:block_scout_web, :chain_id)
-          chain_id -> chain_id
-        end
+      current_chain_id = ChainId.get_id()
 
       relay_chain_id = msg.relay_chain_id
 
@@ -294,13 +474,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
           _ -> nil
         end
 
-      transfer_token =
-        if not is_nil(msg.transfer_token_address_hash) do
-          case Token.get_by_contract_address_hash(msg.transfer_token_address_hash, @api_true) do
-            nil -> %{contract_address_hash: msg.transfer_token_address_hash, symbol: nil, decimals: nil}
-            t -> %{contract_address_hash: t.contract_address_hash, symbol: t.symbol, decimals: t.decimals}
-          end
-        end
+      transfer_token = fetch_transfer_token(msg.transfer_token_address_hash)
 
       message =
         msg
@@ -322,6 +496,15 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     end
   end
 
+  defp fetch_transfer_token(nil), do: nil
+
+  defp fetch_transfer_token(transfer_token_address_hash) do
+    case Token.get_by_contract_address_hash(transfer_token_address_hash, @api_true) do
+      nil -> %{contract_address_hash: transfer_token_address_hash, symbol: nil, decimals: nil}
+      t -> %{contract_address_hash: t.contract_address_hash, symbol: t.symbol, decimals: t.decimals}
+    end
+  end
+
   # Calls `InteropMessage.interop_chain_id_to_instance_info` function and depending on the result
   # returns a map with the instance info.
   #
@@ -339,16 +522,14 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     end
   end
 
+  operation :interop_messages, false
+
   @doc """
     Function to handle GET requests to `/api/v2/optimism/interop/messages` endpoint.
   """
   @spec interop_messages(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def interop_messages(conn, params) do
-    current_chain_id =
-      case ChainId.get_id() do
-        nil -> Application.get_env(:block_scout_web, :chain_id)
-        chain_id -> chain_id
-      end
+    current_chain_id = ChainId.get_id()
 
     {messages, next_page} =
       params
@@ -387,8 +568,10 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     })
   end
 
+  operation :interop_messages_count, false
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/interop/messages/count` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/interop/messages/count` endpoint.
   """
   @spec interop_messages_count(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def interop_messages_count(conn, _params) do
@@ -397,8 +580,31 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     |> render(:optimism_items_count, %{count: InteropMessage.count(@api_true)})
   end
 
+  operation :withdrawals,
+    summary: "List withdrawals.",
+    description: "Retrieves a paginated list of withdrawals.",
+    parameters:
+      base_params() ++
+        define_paging_params([
+          "items_count",
+          "nonce"
+        ]),
+    responses: [
+      ok:
+        {"List of withdrawals.", "application/json",
+         paginated_response(
+           items: Schemas.Optimism.Withdrawal,
+           next_page_params_example: %{
+             "items_count" => 50,
+             "nonce" => "1766847064778384329583297500742918515827483896875618958121606201292650102"
+           },
+           title_prefix: "Withdrawals"
+         )},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/withdrawals` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/withdrawals` endpoint.
   """
   @spec withdrawals(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def withdrawals(conn, params) do
@@ -419,16 +625,27 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     })
   end
 
+  operation :withdrawals_count,
+    summary: "Number of withdrawals in the list.",
+    description: "Retrieves a size of the withdrawals list.",
+    parameters: base_params(),
+    responses: [
+      ok: {"Number of items in the withdrawals list.", "application/json", %Schema{type: :integer, nullable: false}},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/withdrawals/count` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/withdrawals/count` endpoint.
   """
   @spec withdrawals_count(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def withdrawals_count(conn, _params) do
     items_count(conn, Withdrawal)
   end
 
+  operation :interop_public_key, false
+
   @doc """
-    Function to handle GET requests to `/api/v2/optimism/interop/public-key` endpoint.
+  Function to handle GET requests to `/api/v2/optimism/interop/public-key` endpoint.
   """
   @spec interop_public_key(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def interop_public_key(conn, _params) do
@@ -450,10 +667,12 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     end
   end
 
+  operation :interop_import, false
+
   @doc """
-    Function to handle POST request to `/api/v2/import/optimism/interop/` endpoint.
-    Accepts `init` part of the interop message from the source instance or
-    `relay` part of the interop message from the target instance.
+  Function to handle POST request to `/api/v2/import/optimism/interop/` endpoint.
+  Accepts `init` part of the interop message from the source instance or
+  `relay` part of the interop message from the target instance.
   """
   @spec interop_import(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def interop_import(

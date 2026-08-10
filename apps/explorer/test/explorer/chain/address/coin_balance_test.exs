@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Address.CoinBalanceTest do
   use Explorer.DataCase
 
@@ -428,10 +429,8 @@ defmodule Explorer.Chain.Address.CoinBalanceTest do
         created_contract_address: created_contract_address,
         index: 0,
         transaction: transaction,
-        block_number: transaction.block_number,
-        block_hash: transaction.block_hash,
-        block_index: 0,
-        transaction_index: transaction.index
+        transaction_index: transaction.index,
+        block_number: transaction.block_number
       )
 
       balance = insert(:unfetched_balance, address_hash: created_contract_address.hash, block_number: block.number)
@@ -476,10 +475,8 @@ defmodule Explorer.Chain.Address.CoinBalanceTest do
         from_address: from_address,
         index: 0,
         transaction: transaction,
-        block_number: transaction.block_number,
-        block_hash: transaction.block_hash,
-        block_index: 0,
-        transaction_index: transaction.index
+        transaction_index: transaction.index,
+        block_number: transaction.block_number
       )
 
       balance = insert(:unfetched_balance, address_hash: from_address.hash, block_number: block.number)
@@ -518,10 +515,8 @@ defmodule Explorer.Chain.Address.CoinBalanceTest do
         to_address: to_address,
         index: 0,
         transaction: transaction,
-        block_number: transaction.block_number,
-        block_hash: transaction.block_hash,
-        block_index: 0,
-        transaction_index: transaction.index
+        transaction_index: transaction.index,
+        block_number: transaction.block_number
       )
 
       balance = insert(:unfetched_balance, address_hash: to_address.hash, block_number: block.number)
@@ -589,10 +584,8 @@ defmodule Explorer.Chain.Address.CoinBalanceTest do
         from_address: miner,
         index: 0,
         transaction: from_internal_transaction_transaction,
-        block_number: from_internal_transaction_transaction.block_number,
-        block_hash: from_internal_transaction_transaction.block_hash,
-        block_index: 0,
-        transaction_index: from_internal_transaction_transaction.index
+        transaction_index: from_internal_transaction_transaction.index,
+        block_number: from_internal_transaction_transaction.block_number
       )
 
       insert(:unfetched_balance, address_hash: miner.hash, block_number: from_internal_transaction_block.number)
@@ -609,10 +602,8 @@ defmodule Explorer.Chain.Address.CoinBalanceTest do
         index: 0,
         to_address: miner,
         transaction: to_internal_transaction_transaction,
-        block_number: to_internal_transaction_transaction.block_number,
-        block_hash: to_internal_transaction_transaction.block_hash,
-        block_index: 0,
-        transaction_index: to_internal_transaction_transaction.index
+        transaction_index: to_internal_transaction_transaction.index,
+        block_number: to_internal_transaction_transaction.block_number
       )
 
       insert(:unfetched_balance, address_hash: miner.hash, block_number: to_internal_transaction_block.number)
@@ -668,8 +659,6 @@ defmodule Explorer.Chain.Address.CoinBalanceTest do
         index: 0,
         transaction: from_internal_transaction_transaction,
         block_number: from_internal_transaction_transaction.block_number,
-        block_hash: from_internal_transaction_transaction.block_hash,
-        block_index: 0,
         transaction_index: from_internal_transaction_transaction.index
       )
 
@@ -684,8 +673,6 @@ defmodule Explorer.Chain.Address.CoinBalanceTest do
         index: 0,
         transaction: to_internal_transaction_transaction,
         block_number: to_internal_transaction_transaction.block_number,
-        block_hash: to_internal_transaction_transaction.block_hash,
-        block_index: 1,
         transaction_index: to_internal_transaction_transaction.index
       )
 

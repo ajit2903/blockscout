@@ -1,6 +1,8 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.API.V2.TokenTransferController do
   use BlockScoutWeb, :controller
-  alias Explorer.{Chain, Helper, PagingOptions}
+  use OpenApiSpex.ControllerSpecs
+  alias Explorer.{Chain, PagingOptions}
   alias Explorer.Chain.{TokenTransfer, Transaction}
 
   import BlockScoutWeb.Chain,
@@ -16,7 +18,9 @@ defmodule BlockScoutWeb.API.V2.TokenTransferController do
       token_transfers_types_options: 1
     ]
 
-  import Explorer.MicroserviceInterfaces.BENS, only: [maybe_preload_ens: 1]
+  import Explorer.MicroserviceInterfaces.BENS,
+    only: [maybe_preload_ens_for_token_transfers: 1]
+
   import Explorer.MicroserviceInterfaces.Metadata, only: [maybe_preload_metadata: 1]
   import Explorer.PagingOptions, only: [default_paging_options: 0]
 
@@ -24,7 +28,38 @@ defmodule BlockScoutWeb.API.V2.TokenTransferController do
 
   action_fallback(BlockScoutWeb.API.V2.FallbackController)
 
+  plug(OpenApiSpex.Plug.CastAndValidate, json_render_error_v2: true)
+
+  tags(["token-transfers"])
+
   @api_true [api?: true]
+
+  operation :token_transfers,
+    summary: "List token transfers across all token types (ERC-20, ERC-721, ERC-1155)",
+    description: "Retrieves a paginated list of token transfers across all token types (ERC-20, ERC-721, ERC-1155).",
+    parameters:
+      base_params() ++
+        [token_type_param(), limit_param()] ++
+        define_paging_params([
+          "index",
+          "block_number",
+          "batch_log_index",
+          "batch_block_hash",
+          "batch_transaction_hash",
+          "index_in_batch"
+        ]),
+    responses: [
+      ok:
+        {"List of token transfers with pagination information.", "application/json",
+         paginated_response(
+           items: Schemas.TokenTransfer,
+           next_page_params_example: %{
+             "index" => 50,
+             "block_number" => 22_133_247
+           }
+         )},
+      unprocessable_entity: JsonErrorResponse.response()
+    ]
 
   @doc """
     Function to handle GET requests to `/api/v2/token-transfers` endpoint.
@@ -38,7 +73,7 @@ defmodule BlockScoutWeb.API.V2.TokenTransferController do
       |> Keyword.update(:paging_options, default_paging_options(), fn %PagingOptions{
                                                                         page_size: page_size
                                                                       } = paging_options ->
-        maybe_parsed_limit = Helper.parse_integer(params["limit"])
+        maybe_parsed_limit = params[:limit]
         %PagingOptions{paging_options | page_size: min(page_size, maybe_parsed_limit && abs(maybe_parsed_limit))}
       end)
       |> Keyword.merge(token_transfers_types_options(params))
@@ -73,7 +108,10 @@ defmodule BlockScoutWeb.API.V2.TokenTransferController do
     |> put_status(200)
     |> render(:token_transfers, %{
       token_transfers:
-        token_transfers |> Instance.preload_nft(@api_true) |> maybe_preload_ens() |> maybe_preload_metadata(),
+        token_transfers
+        |> Instance.preload_nft(@api_true)
+        |> maybe_preload_ens_for_token_transfers()
+        |> maybe_preload_metadata(),
       decoded_transactions_map: decoded_transactions_map,
       next_page_params: next_page_params
     })

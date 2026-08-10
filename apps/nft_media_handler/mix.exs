@@ -1,15 +1,16 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule NFTMediaHandler.MixProject do
   use Mix.Project
 
   def project do
     [
       app: :nft_media_handler,
-      version: "9.1.1",
+      version: "11.2.3",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
-      elixir: "~> 1.17",
+      elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]

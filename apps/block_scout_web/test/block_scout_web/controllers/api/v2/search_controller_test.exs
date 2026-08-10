@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.API.V2.SearchControllerTest do
   use BlockScoutWeb.ConnCase
   use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
@@ -7,6 +8,15 @@ defmodule BlockScoutWeb.API.V2.SearchControllerTest do
   alias Plug.Conn.Query
 
   describe "/search" do
+    setup do
+      initial_value = :persistent_term.get(:market_token_fetcher_enabled, false)
+      :persistent_term.put(:market_token_fetcher_enabled, true)
+
+      on_exit(fn ->
+        :persistent_term.put(:market_token_fetcher_enabled, initial_value)
+      end)
+    end
+
     test "get token-transfers with ok reputation", %{conn: conn} do
       init_value = Application.get_env(:block_scout_web, :hide_scam_addresses)
       Application.put_env(:block_scout_web, :hide_scam_addresses, true)
@@ -508,7 +518,7 @@ defmodule BlockScoutWeb.API.V2.SearchControllerTest do
     end
 
     test "search for a big positive integer", %{conn: conn} do
-      big_integer = :math.pow(2, 64) |> round |> :erlang.integer_to_binary()
+      big_integer = :math.pow(2, 64) |> round() |> :erlang.integer_to_binary()
       request = get(conn, "/api/v2/search?q=#{big_integer}")
       assert response = json_response(request, 200)
 
@@ -517,7 +527,7 @@ defmodule BlockScoutWeb.API.V2.SearchControllerTest do
     end
 
     test "search for a big negative integer", %{conn: conn} do
-      big_integer = (:math.pow(2, 64) - 1) |> round |> :erlang.integer_to_binary()
+      big_integer = (:math.pow(2, 64) - 1) |> round() |> :erlang.integer_to_binary()
       request = get(conn, "/api/v2/search?q=#{big_integer}")
       assert response = json_response(request, 200)
 
@@ -727,7 +737,9 @@ defmodule BlockScoutWeb.API.V2.SearchControllerTest do
                   ],
                   "icon_url": "https://i.imgur.com/GOfUwCb.jpeg",
                   "docs_url": "https://docs.ens.domains/"
-              }
+              },
+              "protocol_dapp_url": "https://app.ens.domains/",
+              "protocol_dapp_logo": "https://i.imgur.com/ens-logo.png"
           }
       ],
       "next_page_params": null
@@ -837,6 +849,8 @@ defmodule BlockScoutWeb.API.V2.SearchControllerTest do
       ens = Enum.at(response["items"], 0)
       assert ens["address_hash"] == to_string(ens_address)
       assert ens["ens_info"]["name"] == name
+      assert ens["ens_info"]["protocol_dapp_url"] == "https://app.ens.domains/"
+      assert ens["ens_info"]["protocol_dapp_logo"] == "https://i.imgur.com/ens-logo.png"
     end
 
     test "check pagination #4 (ens and metadata tags (complex case) added)", %{conn: conn} do
@@ -1081,7 +1095,9 @@ defmodule BlockScoutWeb.API.V2.SearchControllerTest do
                   ],
                   "icon_url": "https://i.imgur.com/GOfUwCb.jpeg",
                   "docs_url": "https://docs.ens.domains/"
-              }
+              },
+              "protocol_dapp_url": "https://app.ens.domains/",
+              "protocol_dapp_logo": "https://i.imgur.com/ens-logo.png"
           }
       ],
       "next_page_params": null
@@ -1191,6 +1207,8 @@ defmodule BlockScoutWeb.API.V2.SearchControllerTest do
       ens = Enum.at(response["items"], 0)
       assert ens["address_hash"] == to_string(ens_address)
       assert ens["ens_info"]["name"] == name
+      assert ens["ens_info"]["protocol_dapp_url"] == "https://app.ens.domains/"
+      assert ens["ens_info"]["protocol_dapp_logo"] == "https://i.imgur.com/ens-logo.png"
     end
 
     if @chain_type == :default do
@@ -2143,7 +2161,9 @@ defmodule BlockScoutWeb.API.V2.SearchControllerTest do
                   ],
                   "icon_url": "https://i.imgur.com/GOfUwCb.jpeg",
                   "docs_url": "https://docs.ens.domains/"
-              }
+              },
+              "protocol_dapp_url": "https://app.ens.domains/",
+              "protocol_dapp_logo": "https://i.imgur.com/ens-logo.png"
           }
       ],
       "next_page_params": null
@@ -2461,7 +2481,8 @@ defmodule BlockScoutWeb.API.V2.SearchControllerTest do
             "priority" => 0,
             "type" => "address",
             "url" => "/address/#{address_hash}",
-            "reputation" => "ok"
+            "reputation" => "ok",
+            "is_smart_contract_address" => false
           }
           | for(
               i <- 0..48,

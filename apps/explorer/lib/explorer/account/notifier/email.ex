@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Account.Notifier.Email do
   @moduledoc """
     Composing an email to sendgrid
@@ -53,6 +54,9 @@ defmodule Explorer.Account.Notifier.Email do
         amount
 
       "ERC-20" ->
+        amount
+
+      "ZRC-2" ->
         amount
 
       "ERC-721" ->

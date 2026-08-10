@@ -1,9 +1,10 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.GraphQL.Schema do
   @moduledoc false
 
   use Absinthe.Schema
   use Absinthe.Relay.Schema, :modern
-  use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
+  use Utils.CompileTimeEnvHelper, chain_identity: [:explorer, :chain_identity]
 
   alias Absinthe.Middleware.Dataloader, as: AbsintheDataloaderMiddleware
   alias Absinthe.Plugin, as: AbsinthePlugin
@@ -25,7 +26,7 @@ defmodule BlockScoutWeb.GraphQL.Schema do
 
   import_types(BlockScoutWeb.GraphQL.Schema.Types)
 
-  if @chain_type == :celo do
+  if @chain_identity == {:optimism, :celo} do
     import_types(BlockScoutWeb.GraphQL.Celo.Schema.Types)
   end
 
@@ -108,7 +109,7 @@ defmodule BlockScoutWeb.GraphQL.Schema do
       resolve(&Transaction.get_by/3)
     end
 
-    if @chain_type == :celo do
+    if @chain_identity == {:optimism, :celo} do
       require BlockScoutWeb.GraphQL.Celo.QueryFields
       alias BlockScoutWeb.GraphQL.Celo.QueryFields
 

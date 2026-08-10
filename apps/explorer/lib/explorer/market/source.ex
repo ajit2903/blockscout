@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Market.Source do
   @moduledoc """
   Defines behaviors and utilities for fetching cryptocurrency market data from multiple sources.
@@ -42,6 +43,7 @@ defmodule Explorer.Market.Source do
     CryptoCompare,
     CryptoRank,
     DefiLlama,
+    DIA,
     Mobula
   }
 
@@ -234,7 +236,14 @@ defmodule Explorer.Market.Source do
     Decimal.new(value)
   end
 
-  @sources [CoinGecko, CoinMarketCap, CryptoCompare, CryptoRank, DefiLlama, Mobula]
+  @doc """
+  Returns true if the value is nil or a Decimal equal to zero.
+  """
+  @spec zero_or_nil?(Decimal.t() | nil) :: boolean()
+  def zero_or_nil?(nil), do: true
+  def zero_or_nil?(%Decimal{} = value), do: Decimal.equal?(value, Decimal.new(0))
+
+  @sources [CoinGecko, CoinMarketCap, CryptoCompare, CryptoRank, DefiLlama, Mobula, DIA]
 
   @doc """
   Returns a module for fetching native coin market data.

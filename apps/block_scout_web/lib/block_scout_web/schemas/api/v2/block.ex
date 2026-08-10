@@ -1,9 +1,14 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.Schemas.API.V2.Block.ChainTypeCustomizations do
   @moduledoc false
   alias BlockScoutWeb.API.V2.ZkSyncView
   alias BlockScoutWeb.Schemas.API.V2.{Address, General, Token}
   alias BlockScoutWeb.Schemas.Helper
   alias OpenApiSpex.Schema
+
+  use Utils.RuntimeEnvHelper,
+    chain_type: [:explorer, :chain_type],
+    chain_identity: [:explorer, :chain_identity]
 
   @zksync_schema %Schema{
     type: :object,
@@ -43,7 +48,7 @@ defmodule BlockScoutWeb.Schemas.API.V2.Block.ChainTypeCustomizations do
       batch_data_container: %Schema{
         type: :string,
         nullable: true,
-        enum: ["in_blob4844", "in_calldata", "in_celestia", "in_anytrust"]
+        enum: ["in_blob4844", "in_calldata", "in_celestia", "in_anytrust", "in_eigenda"]
       },
       status: %Schema{
         type: :string,
@@ -91,6 +96,12 @@ defmodule BlockScoutWeb.Schemas.API.V2.Block.ChainTypeCustomizations do
     additionalProperties: false
   }
 
+  @doc """
+    Returns the Blob4844 schema.
+  """
+  @spec blob4844_schema() :: Schema.t()
+  def blob4844_schema, do: @blob4844_schema
+
   @celestia_schema %Schema{
     type: :object,
     nullable: false,
@@ -105,6 +116,23 @@ defmodule BlockScoutWeb.Schemas.API.V2.Block.ChainTypeCustomizations do
     additionalProperties: false
   }
 
+  @alt_da_schema %Schema{
+    type: :object,
+    nullable: false,
+    properties: %{
+      commitment: %Schema{type: :string, nullable: true},
+      l1_transaction_hash: General.FullHashNullable,
+      l1_timestamp: General.TimestampNullable
+    },
+    required: [:commitment, :l1_transaction_hash, :l1_timestamp]
+  }
+
+  @doc """
+    Returns the Celestia schema.
+  """
+  @spec celestia_schema() :: Schema.t()
+  def celestia_schema, do: @celestia_schema
+
   @optimism_schema %Schema{
     type: :object,
     nullable: false,
@@ -112,8 +140,16 @@ defmodule BlockScoutWeb.Schemas.API.V2.Block.ChainTypeCustomizations do
       number: %Schema{type: :integer, nullable: true},
       l1_timestamp: General.TimestampNullable,
       l1_transaction_hashes: %Schema{type: :array, items: General.FullHash, nullable: false},
-      batch_data_container: %Schema{type: :string, nullable: false, enum: ["in_blob4844", "in_celestia", "in_calldata"]},
-      blobs: %Schema{type: :array, items: %Schema{anyOf: [@blob4844_schema, @celestia_schema]}, nullable: false}
+      batch_data_container: %Schema{
+        type: :string,
+        nullable: false,
+        enum: ["in_blob4844", "in_celestia", "in_eigenda", "in_alt_da", "in_calldata"]
+      },
+      blobs: %Schema{
+        type: :array,
+        items: %Schema{anyOf: [@blob4844_schema, @celestia_schema, @alt_da_schema]},
+        nullable: false
+      }
     },
     required: [:number, :l1_timestamp, :l1_transaction_hashes, :batch_data_container],
     additionalProperties: false
@@ -212,9 +248,14 @@ defmodule BlockScoutWeb.Schemas.API.V2.Block.ChainTypeCustomizations do
    ## Returns
    - The schema map with chain-specific properties added based on the current chain type configuration
   """
+  # The per-chain extension object (e.g. :arbitrum, :optimism, :zksync, :rsk) is
+  # always advertised in the schema, but BlockScoutWeb.API.V2.BlockView.chain_type_fields/3
+  # only populates it for single-block responses (single_block? = true). This is
+  # consistent only because none of these extension fields appear in `required:`.
   @spec chain_type_fields(map()) :: map()
   def chain_type_fields(schema) do
-    case Application.get_env(:explorer, :chain_type) do
+    chain_type()
+    |> case do
       :rsk ->
         schema
         |> Helper.extend_schema(
@@ -240,18 +281,15 @@ defmodule BlockScoutWeb.Schemas.API.V2.Block.ChainTypeCustomizations do
         schema
         |> Helper.extend_schema(
           properties: %{
-            blob_transactions_count: %Schema{type: :integer, nullable: false},
+            blob_transactions_count: %Schema{type: :integer, minimum: 0, nullable: false},
             blob_gas_used: General.IntegerStringNullable,
             excess_blob_gas: General.IntegerStringNullable,
-            blob_gas_price: General.IntegerString,
+            blob_gas_price: General.IntegerStringNullable,
             burnt_blob_fees: General.IntegerString,
-            beacon_deposits_count: %Schema{type: :integer, nullable: true}
+            beacon_deposits_count: %Schema{type: :integer, minimum: 0, nullable: true}
           },
           required: [:blob_transactions_count, :blob_gas_used, :excess_blob_gas, :beacon_deposits_count]
         )
-
-      :celo ->
-        schema |> Helper.extend_schema(properties: %{celo: @celo_schema}, required: [:celo])
 
       :zilliqa ->
         schema |> Helper.extend_schema(properties: %{zilliqa: @zilliqa_schema})
@@ -259,40 +297,185 @@ defmodule BlockScoutWeb.Schemas.API.V2.Block.ChainTypeCustomizations do
       _ ->
         schema
     end
+    |> chain_identity_fields()
+  end
+
+  defp chain_identity_fields(schema) do
+    case chain_identity() do
+      {:optimism, :celo} ->
+        schema |> Helper.extend_schema(properties: %{celo: @celo_schema})
+
+      _ ->
+        schema
+    end
   end
 end
 
-defmodule BlockScoutWeb.Schemas.API.V2.Block do
+defmodule BlockScoutWeb.Schemas.API.V2.Block.Common do
   @moduledoc """
-  This module defines the schema for the Block struct.
+  This module defines common schema fields for block.
   """
-  require OpenApiSpex
-
-  alias BlockScoutWeb.Schemas.API.V2.{Address, Block.ChainTypeCustomizations, General}
+  alias BlockScoutWeb.Schemas.API.V2.{Address, General}
   alias OpenApiSpex.Schema
 
-  OpenApiSpex.schema(
+  @required_fields [
+    :height,
+    :timestamp,
+    :transactions_count,
+    :internal_transactions_count,
+    :miner,
+    :size,
+    :hash,
+    :parent_hash,
+    :difficulty,
+    :total_difficulty,
+    :gas_used,
+    :gas_limit,
+    :nonce,
+    :base_fee_per_gas,
+    :burnt_fees,
+    :priority_fee,
+    :uncles_hashes,
+    :rewards,
+    :gas_target_percentage,
+    :gas_used_percentage,
+    :burnt_fees_percentage,
+    :type,
+    :transaction_fees,
+    :withdrawals_count,
+    :is_pending_update
+  ]
+
+  # List-response variant: `type` is the machine-readable enum.
+  @rewards_schema %Schema{
+    type: :array,
+    description:
+      "Block rewards grouped by recipient category. Each entry describes a reward paid for this block; the set of categories depends on the chain and block type.",
+    items: %Schema{
+      type: :object,
+      properties: %{
+        reward: General.IntegerString,
+        # Enum values must be kept in sync with
+        # Explorer.Chain.Block.Reward.AddressType :t/0.
+        type: %Schema{
+          type: :string,
+          nullable: false,
+          enum: ["emission_funds", "uncle", "validator"],
+          description: "Reward category (machine-readable identifier)."
+        }
+      },
+      required: [:type, :reward],
+      additionalProperties: false
+    },
+    nullable: false
+  }
+
+  # Single-block-response variant: `type` is a human-readable label.
+  @rewards_schema_single_block %Schema{
+    type: :array,
+    description:
+      "Block rewards grouped by recipient category. Single-block variant: `type` is a human-readable label rather than a machine identifier.",
+    items: %Schema{
+      type: :object,
+      properties: %{
+        reward: General.IntegerString,
+        type: %Schema{
+          type: :string,
+          nullable: false,
+          description: "Human-readable reward category label (e.g. \"Miner Reward\", \"Uncle Reward\")."
+        }
+      },
+      required: [:type, :reward],
+      additionalProperties: false
+    },
+    nullable: false
+  }
+
+  @doc """
+    Returns the common rewards schema for block (list-response variant).
+  """
+  @spec rewards_schema() :: Schema.t()
+  def rewards_schema, do: @rewards_schema
+
+  @doc """
+    Returns the rewards schema for a single-block response, where `type` is a
+    human-readable label rather than the `Explorer.Chain.Block.Reward.AddressType` enum.
+  """
+  @spec rewards_schema_single_block() :: Schema.t()
+  def rewards_schema_single_block, do: @rewards_schema_single_block
+
+  @doc """
+    Returns the list of required fields for the block schema.
+  """
+  @spec required_fields() :: [atom()]
+  def required_fields, do: @required_fields
+
+  @doc """
+    Returns the common schema for block.
+  """
+  @spec schema() :: map()
+  def schema do
     %{
       type: :object,
       properties: %{
-        height: %Schema{type: :integer, nullable: false},
+        height: %Schema{
+          type: :integer,
+          nullable: false,
+          minimum: 0,
+          description: "Block number (zero-based index from genesis)."
+        },
         timestamp: General.Timestamp,
-        transactions_count: %Schema{type: :integer, nullable: false},
-        internal_transactions_count: %Schema{type: :integer, nullable: true},
-        miner: Address,
-        size: %Schema{type: :integer, nullable: false},
+        transactions_count: %Schema{type: :integer, nullable: false, minimum: 0},
+        internal_transactions_count: %Schema{
+          type: :integer,
+          nullable: true,
+          minimum: 0,
+          description: "Number of internal transactions in this block; null when the count is unavailable."
+        },
+        miner: %Schema{
+          allOf: [Address],
+          description:
+            "Address credited with the block — the miner on PoW chains, the fee recipient / proposer on PoS chains, and the sequencer on rollups."
+        },
+        size: %Schema{
+          type: :integer,
+          nullable: true,
+          minimum: 0,
+          description: "Block size in bytes (length of the RLP-encoded block)."
+        },
         hash: General.FullHash,
         parent_hash: General.FullHash,
-        difficulty: General.IntegerString,
-        total_difficulty: General.IntegerString,
+        difficulty: %Schema{
+          allOf: [General.IntegerStringNullable],
+          description: "Proof-of-work difficulty of this block. Zero on proof-of-stake chains."
+        },
+        total_difficulty: %Schema{
+          allOf: [General.IntegerStringNullable],
+          description:
+            "Cumulative chain difficulty through this block (sum of `difficulty` of this block and all ancestors)."
+        },
         gas_used: General.IntegerString,
         gas_limit: General.IntegerString,
-        nonce: General.HexStringNullable,
-        base_fee_per_gas: General.IntegerStringNullable,
-        burnt_fees: General.IntegerStringNullable,
-        priority_fee: General.IntegerStringNullable,
+        nonce: %Schema{
+          allOf: [General.HexString],
+          description: "Proof-of-work nonce used to satisfy the difficulty target. Zero on proof-of-stake chains."
+        },
+        base_fee_per_gas: %Schema{
+          allOf: [General.IntegerStringNullable],
+          description:
+            "EIP-1559 base fee per gas, in wei. Null on blocks produced before EIP-1559 activation or on chains that do not implement EIP-1559."
+        },
+        burnt_fees: %Schema{
+          allOf: [General.IntegerStringNullable],
+          description: "Sum of EIP-1559 base fees burned by transactions in this block, in wei."
+        },
+        priority_fee: %Schema{
+          allOf: [General.IntegerStringNullable],
+          description: "Sum of validator tips (EIP-1559 priority fees) paid by transactions in this block, in wei."
+        },
         uncles_hashes: %Schema{
           type: :array,
+          description: "Hashes of ommer (uncle) blocks referenced by this block.",
           items: %Schema{
             type: :object,
             properties: %{hash: General.FullHash},
@@ -302,56 +485,66 @@ defmodule BlockScoutWeb.Schemas.API.V2.Block do
           },
           nullable: false
         },
-        rewards: %Schema{
-          type: :array,
-          items: %Schema{
-            type: :object,
-            properties: %{
-              type: %Schema{type: :string, nullable: false},
-              reward: General.IntegerString
-            },
-            required: [:type, :reward],
-            additionalProperties: false
-          },
-          nullable: false
+        rewards: @rewards_schema,
+        gas_target_percentage: %Schema{
+          type: :number,
+          format: :float,
+          nullable: false,
+          description: "Percent above the EIP-1559 elasticity target (gas_used vs. gas_limit / elasticity_multiplier)."
         },
-        gas_target_percentage: %Schema{type: :number, format: :float, nullable: false},
-        gas_used_percentage: %Schema{type: :number, format: :float, nullable: false},
-        burnt_fees_percentage: %Schema{type: :number, format: :float, nullable: true},
-        type: %Schema{type: :string, nullable: false, enum: ["block", "uncle", "reorg"]},
-        transaction_fees: General.IntegerString,
-        withdrawals_count: %Schema{type: :integer, nullable: true},
-        is_pending_update: %Schema{type: :boolean, nullable: false}
+        gas_used_percentage: %Schema{
+          type: :number,
+          format: :float,
+          nullable: false,
+          description: "Gas used in this block as a percentage of `gas_limit`."
+        },
+        burnt_fees_percentage: %Schema{
+          type: :number,
+          format: :float,
+          nullable: true,
+          description: "Burned base fees as a percentage of total transaction fees in this block."
+        },
+        # Values mirror BlockScoutWeb.BlockView.block_type/1 output, downcased.
+        type: %Schema{
+          type: :string,
+          nullable: false,
+          enum: ["block", "uncle", "reorg"],
+          description:
+            "Block classification: `block` = main-chain consensus block; `uncle` = ommer (valid but not in main chain); `reorg` = former main-chain block lost to reorganization."
+        },
+        transaction_fees: %Schema{
+          allOf: [General.IntegerString],
+          description: "Sum of transaction fees (gas price × gas used) paid by transactions in this block, in wei."
+        },
+        withdrawals_count: %Schema{
+          type: :integer,
+          minimum: 0,
+          nullable: true,
+          description: "Number of withdrawals included in this block; null when the count is unavailable."
+        },
+        is_pending_update: %Schema{
+          type: :boolean,
+          nullable: true,
+          description:
+            "True when the block is scheduled for re-fetch; its fields may change once re-fetching completes."
+        }
       },
-      required: [
-        :height,
-        :timestamp,
-        :transactions_count,
-        :internal_transactions_count,
-        :miner,
-        :size,
-        :hash,
-        :parent_hash,
-        :difficulty,
-        :total_difficulty,
-        :gas_used,
-        :gas_limit,
-        :nonce,
-        :base_fee_per_gas,
-        :burnt_fees,
-        :priority_fee,
-        :uncles_hashes,
-        :rewards,
-        :gas_target_percentage,
-        :gas_used_percentage,
-        :burnt_fees_percentage,
-        :type,
-        :transaction_fees,
-        :withdrawals_count,
-        :is_pending_update
-      ],
+      required: required_fields(),
       additionalProperties: false
     }
+  end
+end
+
+defmodule BlockScoutWeb.Schemas.API.V2.Block do
+  @moduledoc """
+  This module defines the schema for the Block struct.
+  """
+  require OpenApiSpex
+
+  alias BlockScoutWeb.Schemas.API.V2.{Block.ChainTypeCustomizations, Block.Common}
+
+  OpenApiSpex.schema(
+    Common.schema()
     |> ChainTypeCustomizations.chain_type_fields()
   )
 end

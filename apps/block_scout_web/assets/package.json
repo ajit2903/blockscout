@@ -6,7 +6,7 @@
   "private": true,
   "name": "blockscout",
   "author": "Blockscout",
-  "license": "GPL-3.0",
+  "license": "SEE LICENSE IN ../../../LICENSE",
   "engines": {
     "node": ">=16.0.0",
     "npm": ">=8.0.0"
@@ -22,6 +22,7 @@
     "@amplitude/analytics-browser": "^2.21.1",
     "@fortawesome/fontawesome-free": "^6.7.2",
     "@tarekraafat/autocomplete.js": "^10.2.9",
+    "@vercel/analytics": "^2.0.1",
     "@walletconnect/web3-provider": "^1.8.0",
     "assert": "^2.1.0",
     "bignumber.js": "^9.3.1",

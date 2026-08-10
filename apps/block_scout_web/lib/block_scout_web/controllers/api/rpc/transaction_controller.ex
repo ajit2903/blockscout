@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.API.RPC.TransactionController do
   use BlockScoutWeb, :controller
 
@@ -19,7 +20,7 @@ defmodule BlockScoutWeb.API.RPC.TransactionController do
 
       transaction_updated =
         if (error == "Reverted" || error == "execution reverted") && !revert_reason do
-          %Transaction{transaction | revert_reason: Chain.fetch_transaction_revert_reason(transaction)}
+          %Transaction{transaction | revert_reason: Transaction.fetch_transaction_revert_reason(transaction)}
         else
           transaction
         end

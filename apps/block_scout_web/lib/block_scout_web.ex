@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb do
   @moduledoc """
   The entrypoint for defining your web interface, such
@@ -50,11 +51,10 @@ defmodule BlockScoutWeb do
         root: "lib/block_scout_web/templates",
         namespace: BlockScoutWeb
 
-      # Import convenience functions from controllers
-      import Phoenix.Controller, only: [get_flash: 2, view_module: 1]
-
       # Use all HTML functionality (forms, tags, etc)
-      use Phoenix.HTML
+      import Phoenix.HTML
+      import Phoenix.HTML.Form
+      use PhoenixHTMLHelpers
 
       import BlockScoutWeb.{
         CurrencyHelper,

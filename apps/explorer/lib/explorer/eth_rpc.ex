@@ -1,10 +1,9 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.EthRPC do
   @moduledoc """
   Ethereum JSON RPC methods logic implementation.
   """
   import Explorer.EthRpcHelper
-
-  import EthereumJSONRPC, only: [integer_to_quantity: 1]
 
   use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
 
@@ -965,8 +964,8 @@ defmodule Explorer.EthRPC do
       signed_authorizations
       |> Enum.map(fn signed_authorization ->
         %{
-          "chainId" => String.downcase(integer_to_quantity(signed_authorization.chain_id)),
-          "nonce" => Helper.integer_to_hex(Decimal.to_integer(signed_authorization.nonce)),
+          "chainId" => Helper.decimal_to_hex(signed_authorization.chain_id),
+          "nonce" => Helper.decimal_to_hex(signed_authorization.nonce),
           "address" => to_string(signed_authorization.address),
           "r" => Helper.decimal_to_hex(signed_authorization.r),
           "s" => Helper.decimal_to_hex(signed_authorization.s),
@@ -1196,23 +1195,27 @@ defmodule Explorer.EthRPC do
         from_block = Map.get(filters, "fromBlock", "latest")
         to_block = Map.get(filters, "toBlock", "latest")
 
-        if from_block == "latest" || to_block == "latest" || from_block == "pending" || to_block == "pending" do
-          max_block_number = max_consensus_block_number()
-
-          if is_nil(max_block_number) do
-            {:error, :empty}
-          else
-            to_block_numbers(from_block, to_block, max_block_number)
-          end
-        else
-          to_block_numbers(from_block, to_block, nil)
-        end
+        resolve_logs_blocks_range(from_block, to_block)
 
       {:block, _} ->
         {:error, "Invalid Block Hash"}
 
       {:block_hash, _} ->
         {:error, "Invalid Block Hash"}
+    end
+  end
+
+  defp resolve_logs_blocks_range(from_block, to_block) do
+    if from_block == "latest" || to_block == "latest" || from_block == "pending" || to_block == "pending" do
+      max_block_number = max_consensus_block_number()
+
+      if is_nil(max_block_number) do
+        {:error, :empty}
+      else
+        to_block_numbers(from_block, to_block, max_block_number)
+      end
+    else
+      to_block_numbers(from_block, to_block, nil)
     end
   end
 

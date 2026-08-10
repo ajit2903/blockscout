@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Celo.ElectionReward do
   @moduledoc """
   Represents the rewards distributed in an epoch election. Each reward has a
@@ -29,15 +30,24 @@ defmodule Explorer.Chain.Celo.ElectionReward do
   use Explorer.Schema
 
   import Explorer.PagingOptions, only: [default_paging_options: 0]
-  import Ecto.Query, only: [from: 2, where: 3, group_by: 3, select: 3]
-  import Explorer.Chain.Address.Reputation, only: [reputation_association: 0]
+  import Ecto.Query, only: [from: 2, where: 3]
 
-  alias Explorer.Chain.Cache.CeloCoreContracts
-  alias Explorer.{Chain, SortingHelper}
+  alias Explorer.{Chain, Helper, SortingHelper}
   alias Explorer.Chain.{Address, Address.Reputation, Celo.Epoch, Hash, Token, Wei}
+  alias Explorer.Chain.Cache.CeloCoreContracts
 
   @type type :: :voter | :validator | :group | :delegated_payment
   @types_enum ~w(voter validator group delegated_payment)a
+
+  # Legacy URL forms that differ from `to_string(atom)`.
+  # The URL path uses "delegated-payment" (hyphen), but the canonical atom
+  # is :delegated_payment (underscore). OpenApiSpex.Plug.CastAndValidate
+  # matches enum values via `to_string(atom) == binary`, so
+  # "delegated-payment" does not match :delegated_payment. Including the
+  # hyphenated string in the enum lets CastAndValidate accept both forms
+  # during a migration period, after which the hyphenated form can be
+  # removed.
+  @legacy_type_url_strings ["delegated-payment"]
 
   @reward_type_url_string_to_atom %{
     "voter" => :voter,
@@ -126,6 +136,21 @@ defmodule Explorer.Chain.Celo.ElectionReward do
   def types, do: @types_enum
 
   @doc """
+  Returns the list of election reward types extended with legacy hyphenated
+  URL strings (e.g. `"delegated-payment"`).
+
+  Intended for use as the `enum` in OpenApiSpex schemas so that
+  `CastAndValidate` accepts both the canonical atom forms (`voter`,
+  `validator`, `group`, `delegated_payment`) and the legacy hyphenated URL
+  form (`delegated-payment`).
+
+  Once the migration period ends and `"delegated-payment"` is no longer
+  accepted, replace usages with `types/0` and remove `@legacy_type_url_strings`.
+  """
+  @spec type_enum_with_legacy() :: [type | String.t()]
+  def type_enum_with_legacy, do: @types_enum ++ @legacy_type_url_strings
+
+  @doc """
   Converts a reward type url string to its corresponding atom.
 
   ## Parameters
@@ -167,88 +192,6 @@ defmodule Explorer.Chain.Celo.ElectionReward do
   @spec type_from_string(String.t()) :: {:ok, type} | :error
   def type_from_string(type_string) do
     Map.fetch(@reward_type_string_to_atom, type_string)
-  end
-
-  @doc """
-  Retrieves aggregated election rewards by block hash.
-
-  ## Parameters
-  - `block_hash` (`Hash.Full.t()`): The block hash to aggregate election
-    rewards.
-  - `options` (`Keyword.t()`): Optional parameters for fetching data.
-
-  ## Returns
-  - `%{atom() => Wei.t() | nil}`: A map of aggregated election rewards by type.
-
-  ## Examples
-
-      iex> block_hash = %Hash.Full{
-      ...>   byte_count: 32,
-      ...>   bytes: <<0x9fc76417374aa880d4449a1f7f31ec597f00b1f6f3dd2d66f4c9c6c445836d8b :: big-integer-size(32)-unit(8)>>
-      ...> }
-      iex> Explorer.Chain.Celo.Reader.epoch_number_to_rewards_aggregated_by_type(block_hash)
-      %{voter_reward: %{total: %Decimal{}, count: 2}, ...}
-  """
-  @spec epoch_number_to_rewards_aggregated_by_type(integer(), Keyword.t()) ::
-          %{atom() => %{total: Decimal.t(), count: integer(), token: map() | nil}}
-  def epoch_number_to_rewards_aggregated_by_type(epoch_number, options \\ []) do
-    reward_type_to_aggregated_rewards =
-      __MODULE__
-      |> where([r], r.epoch_number == ^epoch_number)
-      |> group_by([r], r.type)
-      |> select([r], {r.type, sum(r.amount), count(r)})
-      |> Chain.select_repo(options).all()
-      |> Map.new(fn {type, total, count} ->
-        {type, %{total: total, count: count}}
-      end)
-
-    reward_type_to_token = election_reward_tokens_by_type()
-
-    @types_enum
-    |> Map.new(&{&1, %{total: Decimal.new(0), count: 0}})
-    |> Map.merge(reward_type_to_aggregated_rewards)
-    |> Map.new(fn {type, aggregated_reward} ->
-      token = reward_type_to_token[type]
-      aggregated_reward_with_token = Map.put(aggregated_reward, :token, token)
-      {type, aggregated_reward_with_token}
-    end)
-  end
-
-  # Retrieves the token for each type of election reward.
-  #
-  # ## Parameters
-  # - `options` (`Keyword.t()`): Optional parameters for fetching data.
-  #
-  # ## Returns
-  # - `%{atom() => Token.t() | nil}`: A map of reward types to token.
-  #
-  # ## Examples
-  #
-  #     iex> epoch_number = %Hash.Full{
-  #     ...>   byte_count: 32,
-  #     ...>   bytes: <<0x9fc76417374aa880d4449a1f7f31ec597f00b1f6f3dd2d66f4c9c6c445836d8b :: big-integer-size(32)-unit(8)>>
-  #     ...> }
-  #     iex> Explorer.Chain.Celo.ElectionReward.election_reward_token_addresses_by_type(epoch_number)
-  #     %{voter_reward: %Token{}, ...}
-  @spec election_reward_tokens_by_type :: %{atom() => Token.t() | nil}
-  defp election_reward_tokens_by_type do
-    reward_type_to_token_address_hash = reward_type_to_token_address_hash()
-
-    tokens =
-      reward_type_to_token_address_hash
-      |> Map.values()
-      |> Token.get_by_contract_address_hashes(
-        api?: true,
-        necessity_by_association: %{
-          reputation_association() => :optional
-        }
-      )
-
-    reward_type_to_token_address_hash
-    |> Map.new(fn {type, address_hash} ->
-      token = Enum.find(tokens, &(&1.contract_address_hash == address_hash))
-      {type, token}
-    end)
   end
 
   @doc """
@@ -326,6 +269,7 @@ defmodule Explorer.Chain.Celo.ElectionReward do
     sorting_options = Keyword.get(options, :sorting, [])
     from_epoch = Keyword.get(options, :from_epoch)
     to_epoch = Keyword.get(options, :to_epoch)
+    timeout = Keyword.get(options, :timeout)
 
     address_hash
     |> address_hash_to_rewards_query()
@@ -334,11 +278,19 @@ defmodule Explorer.Chain.Celo.ElectionReward do
     |> SortingHelper.apply_sorting(sorting_options, default_sorting)
     |> SortingHelper.page_with_sorting(paging_options, sorting_options, default_sorting)
     |> Chain.join_associations(necessity_by_association)
-    |> Chain.select_repo(options).all()
+    |> Chain.select_repo(options).all(Helper.maybe_timeout(timeout))
     |> with_loaded_token_reputations()
   end
 
-  defp reward_type_to_token_address_hash do
+  @doc """
+  Retrieves a mapping of reward types to their corresponding token address
+  hashes.
+  ## Returns
+  - `%{type => Hash.Address.t()}`: A map of reward types to
+    token address hashes.
+  """
+  @spec reward_type_to_token_address_hash :: %{type => Hash.Address.t()}
+  def reward_type_to_token_address_hash do
     Map.new(
       @reward_type_atom_to_token_atom,
       fn {type, token_atom} ->
@@ -431,29 +383,25 @@ defmodule Explorer.Chain.Celo.ElectionReward do
     end)
   end
 
-  @doc """
-  Custom filter for `ElectionReward`, inspired by
-  `Explorer.Chain.Block.Reader.General.where_block_number_in_period/3`
-  """
   @spec where_epoch_number_in_period(
           Ecto.Query.t(),
           String.t() | integer() | nil,
           String.t() | integer() | nil
         ) :: Ecto.Query.t()
-  def where_epoch_number_in_period(base_query, nil, nil),
+  defp where_epoch_number_in_period(base_query, nil, nil),
     do: base_query
 
-  def where_epoch_number_in_period(base_query, nil, to_epoch),
-    do: where(base_query, [reward], reward.epoch_number < ^to_epoch)
+  defp where_epoch_number_in_period(base_query, nil, to_epoch),
+    do: where(base_query, [reward], reward.epoch_number <= ^to_epoch)
 
-  def where_epoch_number_in_period(base_query, from_epoch, nil),
+  defp where_epoch_number_in_period(base_query, from_epoch, nil),
     do: where(base_query, [reward], reward.epoch_number >= ^from_epoch)
 
-  def where_epoch_number_in_period(base_query, from_epoch, to_epoch),
+  defp where_epoch_number_in_period(base_query, from_epoch, to_epoch),
     do:
       where(
         base_query,
         [reward],
-        reward.epoch_number >= ^from_epoch and reward.epoch_number < ^to_epoch
+        reward.epoch_number >= ^from_epoch and reward.epoch_number <= ^to_epoch
       )
 end

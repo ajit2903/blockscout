@@ -1,13 +1,17 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.Schemas.API.V2.TokenTransfer.TransactionHashCustomization do
   @moduledoc false
+  use Utils.RuntimeEnvHelper,
+    chain_identity: [:explorer, :chain_identity]
+
   require OpenApiSpex
   alias OpenApiSpex.Schema
 
   alias BlockScoutWeb.Schemas.API.V2.General
 
   def schema do
-    case Application.get_env(:explorer, :chain_type) do
-      :celo ->
+    case chain_identity() do
+      {:optimism, :celo} ->
         General.FullHashNullable
 
       _ ->
@@ -28,6 +32,7 @@ defmodule BlockScoutWeb.Schemas.API.V2.TokenTransfer do
     Total,
     TotalERC1155,
     TotalERC721,
+    TotalERC7984,
     TransactionHashCustomization
   }
 
@@ -43,6 +48,7 @@ defmodule BlockScoutWeb.Schemas.API.V2.TokenTransfer do
         anyOf: [
           TotalERC721,
           TotalERC1155,
+          TotalERC7984,
           Total
         ],
         nullable: true
@@ -113,6 +119,23 @@ defmodule BlockScoutWeb.Schemas.API.V2.TokenTransfer.TotalERC1155 do
 end
 
 defmodule BlockScoutWeb.Schemas.API.V2.TokenTransfer.Total do
+  @moduledoc false
+  require OpenApiSpex
+
+  alias BlockScoutWeb.Schemas.API.V2.General
+
+  OpenApiSpex.schema(%{
+    type: :object,
+    properties: %{
+      value: General.IntegerStringNullable,
+      decimals: General.IntegerStringNullable
+    },
+    required: [:value, :decimals],
+    additionalProperties: false
+  })
+end
+
+defmodule BlockScoutWeb.Schemas.API.V2.TokenTransfer.TotalERC7984 do
   @moduledoc false
   require OpenApiSpex
 

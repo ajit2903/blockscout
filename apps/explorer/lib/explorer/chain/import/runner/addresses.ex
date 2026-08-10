@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Import.Runner.Addresses do
   @moduledoc """
   Bulk imports `t:Explorer.Chain.Address.t/0`.
@@ -7,9 +8,9 @@ defmodule Explorer.Chain.Import.Runner.Addresses do
   import Explorer.Chain.Import.Runner.Helper, only: [chain_type_dependent_import: 3]
 
   alias Ecto.{Multi, Repo}
+  alias Explorer.Chain.{Address, Import, Transaction}
   alias Explorer.Chain.Filecoin.PendingAddressOperation, as: FilecoinPendingAddressOperation
   alias Explorer.Chain.Import.Runner
-  alias Explorer.Chain.{Address, Import, Transaction}
   alias Explorer.Prometheus.Instrumenter
 
   require Ecto.Query

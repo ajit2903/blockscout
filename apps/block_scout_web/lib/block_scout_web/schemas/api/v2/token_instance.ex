@@ -1,11 +1,12 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.Schemas.API.V2.TokenInstance do
   @moduledoc """
   This module defines the schema for the TokenInstance struct.
   """
   require OpenApiSpex
 
-  alias OpenApiSpex.Schema
   alias BlockScoutWeb.Schemas.API.V2.{Address, General, Token}
+  alias OpenApiSpex.Schema
 
   OpenApiSpex.schema(%{
     type: :object,
@@ -14,10 +15,13 @@ defmodule BlockScoutWeb.Schemas.API.V2.TokenInstance do
       metadata: %Schema{
         type: :object,
         nullable: true,
+        additionalProperties: true,
         example: %{"name" => "Test", "description" => "Test", "image" => "https://example.com/image.png"}
       },
       owner: %Schema{allOf: [Address], nullable: true},
       token: %Schema{allOf: [Token], nullable: true},
+      token_type: %Schema{allOf: [BlockScoutWeb.Schemas.API.V2.Token.Type], nullable: true},
+      value: General.IntegerStringNullable,
       external_app_url: General.URLNullable,
       animation_url: General.URLNullable,
       image_url: General.URLNullable,

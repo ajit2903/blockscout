@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.SmartContract.Proxy.Models.Implementation do
   @moduledoc """
   The representation of proxy smart-contract implementation.
@@ -36,7 +37,8 @@ defmodule Explorer.Chain.SmartContract.Proxy.Models.Implementation do
     :clone_with_immutable_arguments,
     :eip7702,
     :resolved_delegate_proxy,
-    :erc7760
+    :erc7760,
+    :minimal_proxy
   ]
 
   @typedoc """
@@ -94,7 +96,7 @@ defmodule Explorer.Chain.SmartContract.Proxy.Models.Implementation do
   Returns all implementations for the given smart-contract address hash
   """
   @spec get_proxy_implementations(Hash.Address.t() | nil, Keyword.t()) :: __MODULE__.t() | nil
-  def get_proxy_implementations(proxy_address_hash, options \\ []) do
+  def get_proxy_implementations(proxy_address_hash, options \\ [api?: true]) do
     proxy_address_hash
     |> get_proxy_implementations_query()
     |> Chain.select_repo(options).one()

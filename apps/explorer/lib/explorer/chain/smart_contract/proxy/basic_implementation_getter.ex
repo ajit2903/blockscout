@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.SmartContract.Proxy.BasicImplementationGetter do
   @moduledoc """
   Module for fetching proxy implementation from public smart-contract method
@@ -15,6 +16,7 @@ defmodule Explorer.Chain.SmartContract.Proxy.BasicImplementationGetter do
   # 0xbb82aa5e = keccak256(comptrollerImplementation())
   @comptroller_implementation_signature <<0xBB82AA5E::4-unit(8)>>
 
+  @impl true
   def quick_resolve_implementations(address, proxy_type) do
     signature =
       case proxy_type do
@@ -35,6 +37,7 @@ defmodule Explorer.Chain.SmartContract.Proxy.BasicImplementationGetter do
     end
   end
 
+  @impl true
   def resolve_implementations(_proxy_address, _proxy_type, prefetched_values) do
     with {:ok, value} <- Map.fetch(prefetched_values, :implementation_getter),
          {:ok, address_hash} <- Proxy.extract_address_hash(value) do

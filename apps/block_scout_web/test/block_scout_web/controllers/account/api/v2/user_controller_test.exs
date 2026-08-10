@@ -1,5 +1,7 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.Account.Api.V2.UserControllerTest do
   use BlockScoutWeb.ConnCase
+  use Utils.RuntimeEnvHelper, chain_type: [:explorer, :chain_type]
 
   alias Explorer.Account.{
     Identity,
@@ -20,6 +22,15 @@ defmodule BlockScoutWeb.Account.Api.V2.UserControllerTest do
   end
 
   describe "Test account/api/account/v2/user" do
+    setup do
+      initial_value = :persistent_term.get(:market_token_fetcher_enabled, false)
+      :persistent_term.put(:market_token_fetcher_enabled, true)
+
+      on_exit(fn ->
+        :persistent_term.put(:market_token_fetcher_enabled, initial_value)
+      end)
+    end
+
     test "get user info", %{conn: conn, user: user} do
       result_conn =
         conn
@@ -566,6 +577,32 @@ defmodule BlockScoutWeb.Account.Api.V2.UserControllerTest do
       Application.put_env(:explorer, Explorer.Account, old_env)
     end
 
+    test "can't insert contract watchlist address", %{conn: conn} do
+      address = insert(:contract_address)
+
+      response =
+        conn
+        |> post(
+          "/api/account/v2/user/watchlist",
+          build(:watchlist_address) |> Map.put("address_hash", to_string(address.hash))
+        )
+        |> json_response(422)
+
+      assert response == %{"errors" => %{"address_hash" => ["This address isn't EOA"]}}
+    end
+
+    test "can insert EOA with code watchlist address", %{conn: conn, user: _user} do
+      address = insert(:contract_address, contract_code: "0xef01000000000000000000000000000000000000000123")
+
+      _response =
+        conn
+        |> post(
+          "/api/account/v2/user/watchlist",
+          build(:watchlist_address) |> Map.put("address_hash", to_string(address.hash))
+        )
+        |> json_response(200)
+    end
+
     test "check watchlist tags pagination", %{conn: conn, user: user} do
       tags_address =
         for _ <- 0..50 do
@@ -1090,12 +1127,22 @@ defmodule BlockScoutWeb.Account.Api.V2.UserControllerTest do
       }
     }
 
+    notification_settings_extended =
+      if chain_type() == :zilliqa do
+        Map.put(notification_settings, "ZRC-2", %{
+          "incoming" => watchlist.watch_zrc_2_input,
+          "outcoming" => watchlist.watch_zrc_2_output
+        })
+      else
+        notification_settings
+      end
+
     assert json["address_hash"] == to_string(watchlist.address_hash)
     assert json["name"] == watchlist.name
     assert json["id"] == watchlist.id
     assert json["address"]["hash"] == Address.checksum(watchlist.address_hash)
     assert json["notification_methods"]["email"] == watchlist.notify_email
-    assert json["notification_settings"] == notification_settings
+    assert json["notification_settings"] == notification_settings_extended
   end
 
   defp check_paginated_response(first_page_resp, second_page_resp, list) do

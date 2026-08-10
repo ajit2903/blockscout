@@ -1,6 +1,5 @@
 defmodule Explorer.Factory do
   use ExMachina.Ecto, repo: Explorer.Repo
-  use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
 
   require Ecto.Query
 
@@ -22,9 +21,10 @@ defmodule Explorer.Factory do
   }
 
   alias Explorer.Admin.Administrator
-  alias Explorer.Chain.Beacon.{Blob, BlobTransaction, Deposit}
+  alias Explorer.Chain.Beacon.{Blob, BlobTransaction}
   alias Explorer.Chain.Block.{EmissionReward, Range, Reward}
   alias Explorer.Chain.Stability.Validator, as: ValidatorStability
+  alias Explorer.Chain.Celo.PendingEpochBlockOperation, as: CeloPendingEpochBlockOperation
 
   alias Explorer.Chain.{
     Address,
@@ -32,16 +32,14 @@ defmodule Explorer.Factory do
     Address.TokenBalance,
     Address.CoinBalance,
     Address.CoinBalanceDaily,
-    Address.ScamBadgeToAddress,
     Block,
     ContractMethod,
     Data,
+    DecompiledSmartContract,
     Hash,
     InternalTransaction,
     Log,
-    MultichainSearchDb,
     PendingBlockOperation,
-    PendingTransactionOperation,
     SignedAuthorization,
     SmartContract,
     SmartContractAdditionalSource,
@@ -49,29 +47,24 @@ defmodule Explorer.Factory do
     TokenTransfer,
     Token.Instance,
     Transaction,
-    Wei,
     Withdrawal
   }
 
-  alias Explorer.Chain.Optimism.{InteropMessage, OutputRoot}
+  alias Explorer.Chain.Optimism.OutputRoot
   alias Explorer.Chain.SmartContract.Proxy.Models.Implementation
-  alias Explorer.Chain.Zilliqa.Hash.BLSPublicKey
-  alias Explorer.Chain.Zilliqa.Staker, as: ZilliqaStaker
-
-  alias Explorer.Migrator.MigrationStatus
 
   alias Explorer.SmartContract.Helper
   alias Explorer.Tags.{AddressTag, AddressToTag}
   alias Explorer.Market.MarketHistory
   alias Explorer.Repo
 
-  alias Explorer.Utility.{EventNotification, MissingBalanceOfToken, MissingBlockRange}
+  alias Explorer.Utility.{MissingBalanceOfToken, MissingBlockRange}
 
   alias Ueberauth.Strategy.Auth0
-  alias Ueberauth.Auth.{Extra, Info}
+  alias Ueberauth.Auth.Info
   alias Ueberauth.Auth
 
-  if @chain_type == :zksync do
+  if Application.compile_env(:explorer, :chain_type) == :zksync do
     @optimization_runs "1"
   else
     @optimization_runs 1
@@ -86,20 +79,13 @@ defmodule Explorer.Factory do
   end
 
   def auth_factory do
-    email = sequence(:email, &"test_user-#{&1}@blockscout.com")
-    image = sequence("https://example.com/avatar/test_user")
-    name = sequence("User Test")
-    nickname = sequence("test_user")
-    uid = sequence("blockscout|000")
-    address_hash = to_string(build(:contract_address).hash)
-
     %Auth{
       info: %Info{
         birthday: nil,
         description: nil,
-        email: email,
+        email: sequence(:email, &"test_user-#{&1}@blockscout.com"),
         first_name: nil,
-        image: image,
+        image: sequence("https://example.com/avatar/test_user"),
         last_name: nil,
         location: nil,
         name: sequence("User Test"),
@@ -109,36 +95,7 @@ defmodule Explorer.Factory do
       },
       provider: :auth0,
       strategy: Auth0,
-      uid: uid,
-      extra: %Extra{
-        raw_info: %{
-          user: %{
-            "created_at" => "2024-09-06T13:49:20.481Z",
-            "email" => email,
-            "email_verified" => true,
-            "identities" => [
-              %{
-                "connection" => "email",
-                "isSocial" => false,
-                "provider" => "email",
-                "user_id" => "66db0852af53e2c0ae80ddb2"
-              }
-            ],
-            "last_ip" => "42.42.42.42",
-            "last_login" => "2024-09-14T12:14:26.965Z",
-            "logins_count" => 11,
-            "name" => name,
-            "nickname" => nickname,
-            "picture" => image,
-            "updated_at" => "2024-09-14T12:14:26.966Z",
-            "user_id" => uid,
-            "user_metadata" => %{
-              "web3_address_hash" => address_hash
-            }
-          },
-          token: nil
-        }
-      }
+      uid: sequence("blockscout|000")
     }
   end
 
@@ -171,7 +128,7 @@ defmodule Explorer.Factory do
   end
 
   def watchlist_address_db_factory(%{wl_id: id}) do
-    hash = insert(:address).hash
+    hash = build(:address).hash
 
     %WatchlistAddress{
       name: sequence("test"),
@@ -198,6 +155,19 @@ defmodule Explorer.Factory do
     %{"contract_address_hash" => contract_address_hash, "name" => sequence("test"), "abi" => contract_code_info().abi}
   end
 
+  def public_tags_request_factory do
+    %{
+      "full_name" => sequence("full name"),
+      "email" => sequence(:email, &"test_user-#{&1}@blockscout.com"),
+      "tags" => Enum.join(Enum.map(1..Enum.random(1..2), fn _ -> sequence("Tag") end), ";"),
+      "website" => sequence("website"),
+      "additional_comment" => sequence("additional_comment"),
+      "addresses" => Enum.map(1..Enum.random(1..10), fn _ -> to_string(build(:address).hash) end),
+      "company" => sequence("company"),
+      "is_owner" => random_bool()
+    }
+  end
+
   def account_watchlist_factory do
     %Watchlist{
       identity: build(:account_identity)
@@ -217,7 +187,7 @@ defmodule Explorer.Factory do
   end
 
   def tag_transaction_db_factory(%{user: user}) do
-    %TagTransaction{name: sequence("name"), transaction_hash: insert(:transaction).hash, identity_id: user.id}
+    %TagTransaction{name: sequence("name"), tx_hash: insert(:transaction).hash, identity_id: user.id}
   end
 
   def address_to_tag_factory do
@@ -256,54 +226,10 @@ defmodule Explorer.Factory do
     }
   end
 
-  def multichain_search_db_export_token_info_queue_factory do
-    [data_type] = Enum.take_random([:metadata, :total_supply, :counters, :market_data], 1)
-
-    data =
-      case data_type do
-        :metadata ->
-          %{
-            token_type: "ERC-20",
-            name: sequence("TokenName"),
-            symbol: sequence("TS"),
-            decimals: 18,
-            total_supply: "1000"
-          }
-
-        :total_supply ->
-          %{total_supply: "1000"}
-
-        :counters ->
-          %{transfers_count: "456", holders_count: "123"}
-
-        :market_data ->
-          %{fiat_value: "123.456", circulating_market_cap: "1000.0001"}
-      end
-
-    %MultichainSearchDb.TokenInfoExportQueue{
-      address_hash: address_hash().bytes,
-      data_type: data_type,
-      data: data
-    }
-  end
-
   def address_factory do
     %Address{
       hash: address_hash()
     }
-    |> Map.merge(address_factory_chain_type_fields())
-  end
-
-  case @chain_type do
-    :zksync ->
-      defp address_factory_chain_type_fields() do
-        %{
-          contract_code_refetched: true
-        }
-      end
-
-    _ ->
-      defp address_factory_chain_type_fields(), do: %{}
   end
 
   def address_name_factory do
@@ -607,7 +533,7 @@ defmodule Explorer.Factory do
     |> Map.merge(block_factory_chain_type_fields())
   end
 
-  case @chain_type do
+  case Application.compile_env(:explorer, :chain_type) do
     :arbitrum ->
       defp block_factory_chain_type_fields() do
         %{
@@ -761,18 +687,6 @@ defmodule Explorer.Factory do
     %PendingBlockOperation{}
   end
 
-  def pending_transaction_operation_factory do
-    %PendingTransactionOperation{}
-  end
-
-  def multichain_search_db_main_export_queue_factory do
-    %MultichainSearchDb.MainExportQueue{}
-  end
-
-  def multichain_search_db_export_balances_queue_factory do
-    %MultichainSearchDb.BalancesExportQueue{}
-  end
-
   def internal_transaction_factory() do
     gas = Enum.random(21_000..100_000)
     gas_used = Enum.random(0..gas)
@@ -868,20 +782,18 @@ defmodule Explorer.Factory do
   end
 
   def token_transfer_log_factory do
+    token_contract_address = build(:address)
     to_address = build(:address)
     from_address = build(:address)
 
-    contract_code = Map.fetch!(contract_code_info(), :bytecode)
-    token_address = insert(:contract_address, contract_code: contract_code)
-
-    transaction = build(:transaction, to_address: token_address, from_address: from_address)
+    transaction = build(:transaction, to_address: token_contract_address, from_address: from_address)
 
     log_params = %{
       first_topic: TokenTransfer.constant(),
       second_topic: zero_padded_address_hash_string(from_address.hash),
       third_topic: zero_padded_address_hash_string(to_address.hash),
-      address_hash: token_address.hash,
-      address: token_address,
+      address_hash: token_contract_address.hash,
+      address: nil,
       data: "0x0000000000000000000000000000000000000000000000000de0b6b3a7640000",
       transaction: transaction
     }
@@ -914,39 +826,14 @@ defmodule Explorer.Factory do
 
     token_address = insert(:contract_address, contract_code: contract_code)
     token = insert(:token, contract_address: token_address)
-    block = build(:block)
 
     %TokenTransfer{
-      block: block,
+      block: build(:block),
       amount: Decimal.new(1),
-      block_number: block.number,
+      block_number: block_number(),
       from_address: from_address,
       to_address: to_address,
       token_contract_address: token_address,
-      token_type: token.type,
-      transaction: log.transaction,
-      log_index: log.index,
-      block_consensus: true
-    }
-  end
-
-  def token_transfer_with_predefined_params_factory(%{log: log, block: block}) do
-    to_address_hash = address_hash_from_zero_padded_hash_string(to_string(log.third_topic))
-    from_address_hash = address_hash_from_zero_padded_hash_string(to_string(log.second_topic))
-
-    # `to_address` is the only thing that isn't created from the token_transfer_log_factory
-    to_address = build(:address, hash: to_address_hash)
-    from_address = build(:address, hash: from_address_hash)
-
-    token = insert(:token, contract_address: log.address)
-
-    %TokenTransfer{
-      block: block,
-      amount: Decimal.new(1),
-      block_number: block.number,
-      from_address: from_address,
-      to_address: to_address,
-      token_contract_address: log.address,
       token_type: token.type,
       transaction: log.transaction,
       log_index: log.index,
@@ -1010,7 +897,7 @@ defmodule Explorer.Factory do
     |> Map.merge(transaction_factory_chain_type_fields())
   end
 
-  case @chain_type do
+  case Application.compile_env(:explorer, :chain_type) do
     :arbitrum ->
       defp transaction_factory_chain_type_fields() do
         %{
@@ -1061,21 +948,6 @@ defmodule Explorer.Factory do
     }
   end
 
-  def signed_authorization_factory do
-    %SignedAuthorization{
-      transaction: build(:transaction),
-      index: 0,
-      chain_id: 0,
-      address: address_hash(),
-      nonce: 0,
-      r: 0,
-      s: 0,
-      v: 0,
-      authority: address_hash(),
-      status: nil
-    }
-  end
-
   def smart_contract_factory do
     contract_code_info = contract_code_info()
 
@@ -1091,7 +963,7 @@ defmodule Explorer.Factory do
       abi: contract_code_info.abi,
       contract_code_md5: bytecode_md5,
       verified_via_sourcify: Enum.random([true, false]),
-      language: Enum.random([:solidity, :vyper]),
+      is_vyper_contract: Enum.random([true, false]),
       verified_via_eth_bytecode_db: Enum.random([true, false]),
       verified_via_verifier_alliance: Enum.random([true, false])
     }
@@ -1103,6 +975,16 @@ defmodule Explorer.Factory do
 
   def unique_smart_contract_factory do
     Map.replace(smart_contract_factory(), :name, sequence("SimpleStorage"))
+  end
+
+  def decompiled_smart_contract_factory do
+    contract_code_info = contract_code_info()
+
+    %DecompiledSmartContract{
+      address_hash: insert(:address, contract_code: contract_code_info.bytecode, decompiled: true).hash,
+      decompiler_version: "test_decompiler",
+      decompiled_source_code: contract_code_info.source_code
+    }
   end
 
   def proxy_implementation_factory do
@@ -1317,6 +1199,22 @@ defmodule Explorer.Factory do
     sequence("withdrawal_index", & &1)
   end
 
+  def signed_authorization_factory do
+    transaction = build(:transaction)
+
+    %SignedAuthorization{
+      transaction_hash: transaction.hash,
+      index: sequence(:signed_authorization_index, & &1),
+      chain_id: 1,
+      address: address_hash(),
+      nonce: Enum.random(0..1_000),
+      r: Decimal.new(sequence(:signed_authorization_r, & &1) + 1),
+      s: Decimal.new(sequence(:signed_authorization_s, & &1) + 1),
+      v: Enum.random(0..1),
+      authority: address_hash()
+    }
+  end
+
   def withdrawal_validator_index do
     sequence("withdrawal_validator_index", & &1)
   end
@@ -1342,22 +1240,6 @@ defmodule Explorer.Factory do
     }
   end
 
-  def op_interop_message_factory do
-    %InteropMessage{
-      sender_address_hash: insert(:address).hash,
-      target_address_hash: insert(:address).hash,
-      nonce: sequence("op_interop_message_nonce", & &1),
-      init_chain_id: 1,
-      init_transaction_hash: insert(:transaction).hash,
-      block_number: insert(:block).number,
-      timestamp: DateTime.utc_now(),
-      relay_chain_id: 2,
-      relay_transaction_hash: transaction_hash(),
-      payload: "0x123123",
-      failed: random_bool()
-    }
-  end
-
   def op_output_root_factory do
     %OutputRoot{
       l2_output_index: op_output_root_l2_output_index(),
@@ -1366,14 +1248,6 @@ defmodule Explorer.Factory do
       l1_timestamp: DateTime.utc_now(),
       l1_block_number: op_output_root_l1_block_number(),
       output_root: op_output_root_hash()
-    }
-  end
-
-  def db_migration_status_factory do
-    %MigrationStatus{
-      migration_name: nil,
-      status: "started",
-      meta: nil
     }
   end
 
@@ -1401,208 +1275,11 @@ defmodule Explorer.Factory do
 
     %ValidatorStability{
       address_hash: address.hash,
-      state: Enum.random(0..2),
-      blocks_validated: Enum.random(0..100)
+      state: Enum.random(0..2)
     }
   end
 
-  def zilliqa_staker_factory do
-    control_address = insert(:address)
-    reward_address = insert(:address)
-    signing_address = insert(:address)
-
-    block = insert(:block)
-
-    %ZilliqaStaker{
-      bls_public_key: zilliqa_bls_public_key(),
-      index: sequence(:zilliqa_staker_index, & &1),
-      control_address_hash: control_address.hash,
-      reward_address_hash: reward_address.hash,
-      signing_address_hash: signing_address.hash,
-      added_at_block_number: block.number,
-      stake_updated_at_block_number: block.number,
-      balance: Decimal.new(1_000_000)
-    }
-  end
-
-  def zilliqa_bls_public_key do
-    {:ok, bls_public_key} =
-      :zilliqa_bls_public_key
-      |> sequence(& &1)
-      |> BLSPublicKey.cast()
-
-    to_string(bls_public_key)
-  end
-
-  def withdrawal_log_factory(params) do
-    weth_log(TokenTransfer.weth_withdrawal_signature(), params)
-  end
-
-  def deposit_log_factory(params) do
-    weth_log(TokenTransfer.weth_deposit_signature(), params)
-  end
-
-  defp weth_log(first_topic, %{
-         from_address: from_address,
-         token_contract_address: token_contract_address,
-         amount: amount,
-         transaction: transaction,
-         block: block
-       }) do
-    data = "0x" <> (Integer.to_string(amount, 16) |> String.downcase() |> String.pad_leading(64, "0"))
-
-    %Log{
-      address: token_contract_address,
-      address_hash: token_contract_address.hash,
-      block: block,
-      block_number: block.number,
-      data: data,
-      first_topic: first_topic,
-      second_topic: zero_padded_address_hash_string(from_address.hash),
-      third_topic: nil,
-      fourth_topic: nil,
-      index: sequence("log_index", & &1),
-      transaction: transaction
-    }
-  end
-
-  def event_notification_factory do
-    %EventNotification{
-      data: "test_data",
-      inserted_at: DateTime.utc_now()
-    }
-  end
-
-  def scam_badge_to_address_factory do
-    %ScamBadgeToAddress{
-      address_hash: insert(:address).hash
-    }
-  end
-
-  @beacon_deposit_abi ABI.parse_specification(
-                        [
-                          %{
-                            "anonymous" => false,
-                            "inputs" => [
-                              %{
-                                "indexed" => false,
-                                "internalType" => "bytes",
-                                "name" => "pubkey",
-                                "type" => "bytes"
-                              },
-                              %{
-                                "indexed" => false,
-                                "internalType" => "bytes",
-                                "name" => "withdrawal_credentials",
-                                "type" => "bytes"
-                              },
-                              %{
-                                "indexed" => false,
-                                "internalType" => "bytes",
-                                "name" => "amount",
-                                "type" => "bytes"
-                              },
-                              %{
-                                "indexed" => false,
-                                "internalType" => "bytes",
-                                "name" => "signature",
-                                "type" => "bytes"
-                              },
-                              %{
-                                "indexed" => false,
-                                "internalType" => "bytes",
-                                "name" => "index",
-                                "type" => "bytes"
-                              }
-                            ],
-                            "name" => "DepositEvent",
-                            "type" => "event"
-                          }
-                        ],
-                        include_events?: true
-                      )
-                      |> List.first()
-
-  def beacon_deposit_log_factory(attrs) do
-    pubkey_raw = Map.get(attrs, :deposit_pubkey, sequence("beacon_deposit_pubkey", &<<&1::384>>))
-
-    withdrawal_credentials_raw =
-      Map.get(
-        attrs,
-        :deposit_withdrawal_credentials,
-        sequence("beacon_deposit_withdrawal_credentials", &<<&1::256>>)
-      )
-
-    amount = Map.get(attrs, :deposit_amount, sequence("beacon_deposit_amount", & &1))
-    signature_raw = Map.get(attrs, :deposit_signature, sequence("beacon_deposit_signature", &<<&1::768>>))
-    index = Map.get_lazy(attrs, :deposit_index, fn -> sequence("beacon_deposit_index", & &1) end)
-
-    <<_::bytes-4, data_raw::binary>> =
-      ABI.TypeEncoder.encode(
-        [
-          pubkey_raw,
-          withdrawal_credentials_raw,
-          <<amount::unsigned-little-64>>,
-          signature_raw,
-          <<index::unsigned-little-64>>
-        ],
-        @beacon_deposit_abi
-      )
-
-    build(
-      :log,
-      Map.merge(
-        %{
-          first_topic: "0x649BBC62D0E31342AFEA4E5CD82D4049E7E1EE912FC0889AA790803BE39038C5",
-          second_topic: nil,
-          third_topic: nil,
-          fourth_topic: nil,
-          data: %Data{bytes: data_raw}
-        },
-        attrs
-        |> Map.drop([
-          :deposit_pubkey,
-          :deposit_withdrawal_credentials,
-          :deposit_amount,
-          :deposit_signature,
-          :deposit_index
-        ])
-      )
-    )
-  end
-
-  def beacon_deposit_factory do
-    pubkey_raw = sequence("beacon_deposit_pubkey", &<<&1::384>>)
-    withdrawal_credentials_raw = sequence("beacon_deposit_withdrawal_credentials", &<<&1::256>>)
-    amount = sequence("beacon_deposit_amount", & &1)
-    signature_raw = sequence("beacon_deposit_signature", &<<&1::768>>)
-    index = sequence("beacon_deposit_index", & &1)
-
-    log =
-      insert(:beacon_deposit_log,
-        deposit_pubkey: pubkey_raw,
-        deposit_withdrawal_credentials: withdrawal_credentials_raw,
-        deposit_amount: amount,
-        deposit_signature: signature_raw,
-        deposit_index: index
-      )
-
-    block = insert(:block)
-    transaction = insert(:transaction) |> with_block(block)
-
-    %Deposit{
-      pubkey: %Data{bytes: pubkey_raw},
-      withdrawal_credentials: %Data{bytes: withdrawal_credentials_raw},
-      amount: amount |> Decimal.new() |> Wei.from(:wei),
-      signature: %Data{bytes: signature_raw},
-      index: index,
-      block_number: transaction.block.number,
-      block_timestamp: transaction.block.timestamp,
-      log_index: log.index,
-      status: :pending,
-      from_address: insert(:address),
-      block: transaction.block,
-      transaction: transaction
-    }
+  def celo_pending_epoch_block_operation_factory do
+    %CeloPendingEpochBlockOperation{}
   end
 end

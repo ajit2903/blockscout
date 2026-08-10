@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.OnDemand.ContractCode do
   @moduledoc """
   Ensures that we have a smart-contract bytecode indexed.
@@ -190,6 +191,17 @@ defmodule Indexer.Fetcher.OnDemand.ContractCode do
   def handle_call({:fetch, address}, _from, state) do
     result = fetch_contract_code(address, state)
     {:reply, result, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, :normal}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(message, state) do
+    Logger.warning("Unexpected message received in handle_info/2: #{inspect(message)}")
+
+    {:noreply, state}
   end
 
   # An initial threshold to fetch smart-contract bytecode on-demand

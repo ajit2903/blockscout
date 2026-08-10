@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.Optimism.Interop.MultichainExport do
   @moduledoc """
     Finds messages without `sent_to_multichain` flag in the `op_interop_messages` database table and
@@ -18,7 +19,7 @@ defmodule Indexer.Fetcher.Optimism.Interop.MultichainExport do
   require Logger
 
   import Ecto.Query
-  import Explorer.Helper, only: [valid_url?: 1]
+  import Utils.ConfigHelper, only: [valid_url?: 1]
   import Indexer.Fetcher.Optimism.Interop.Helper, only: [log_cant_get_chain_id_from_rpc: 0]
 
   alias Ecto.Multi

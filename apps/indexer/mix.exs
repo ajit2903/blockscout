@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.MixProject do
   use Mix.Project
 
@@ -10,11 +11,11 @@ defmodule Indexer.MixProject do
       deps: deps(),
       deps_path: "../../deps",
       description: "Fetches blockchain data from on-chain node for later reading with Explorer.",
-      elixir: "~> 1.17",
+      elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       lockfile: "../../mix.lock",
       start_permanent: Mix.env() == :prod,
-      version: "9.1.1",
+      version: "11.2.3",
       xref: [
         exclude: [
           Explorer.Chain.Optimism.Deposit,
@@ -60,17 +61,17 @@ defmodule Indexer.MixProject do
       # Importing to database
       {:explorer, in_umbrella: true},
       # ex_secp256k1 crypto functions
-      {:ex_secp256k1, "~> 0.7.0"},
+      {:ex_secp256k1, "~> 0.8.0"},
       # Log errors and application output to separate files
       {:logger_file_backend, "~> 0.0.10"},
+      {:logger_json, "~> 7.0"},
       # Mocking `EthereumJSONRPC.Transport`, so we avoid hitting real chains for local testing
       {:mox, "~> 1.1.0"},
-      {:prometheus_ex, "~> 5.0.0", override: true},
+      {:prometheus_ex, "~> 5.1.0", override: true},
       # Tracing
       {:spandex, "~> 3.0"},
       # `:spandex` integration with Datadog
       {:spandex_datadog, "~> 1.0"},
-      {:logger_json, "~> 5.1"},
       {:varint, "~> 1.4"},
       {:utils, in_umbrella: true},
       {:cachex, "~> 4.0"}

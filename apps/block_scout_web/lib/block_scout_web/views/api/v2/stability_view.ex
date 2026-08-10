@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.API.V2.StabilityView do
   alias BlockScoutWeb.API.V2.{Helper, TokenView}
   alias Explorer.Chain.{Address.Reputation, Log, Token, Transaction}
@@ -89,7 +90,7 @@ defmodule BlockScoutWeb.API.V2.StabilityView do
 
   defp do_extend_with_stability_fees_info(transactions) when is_list(transactions) do
     {transactions, _tokens_acc} =
-      Enum.map_reduce(transactions, %{}, fn transaction, tokens_acc ->
+      Enum.map_reduce(transactions, %{}, fn transaction = %Transaction{}, tokens_acc ->
         case Log.fetch_log_by_transaction_hash_and_first_topic(
                transaction.hash,
                @transaction_fee_event_signature,

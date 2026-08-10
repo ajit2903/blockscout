@@ -1,9 +1,13 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Cache.GasPriceOracle do
   @moduledoc """
   Cache for gas price oracle (safelow/average/fast gas prices).
   """
 
   require Logger
+
+  use Utils.RuntimeEnvHelper,
+    chain_identity: [:explorer, :chain_identity]
 
   import Ecto.Query,
     only: [
@@ -172,7 +176,7 @@ defmodule Explorer.Chain.Cache.GasPriceOracle do
 
     new_acc =
       fee_query
-      |> filter_unknown_transaction_types(Application.get_env(:explorer, :chain_type))
+      |> filter_unknown_transaction_types(chain_identity())
       |> Repo.all(timeout: :infinity)
       |> merge_gas_prices(acc, from_block_actual)
 
@@ -185,7 +189,7 @@ defmodule Explorer.Chain.Cache.GasPriceOracle do
       {{:error, error}, get_gas_prices_acc()}
   end
 
-  defp filter_unknown_transaction_types(query, :celo) do
+  defp filter_unknown_transaction_types(query, {:optimism, :celo}) do
     query |> where([transaction: t], is_nil(t.type) or t.type != 123)
   end
 

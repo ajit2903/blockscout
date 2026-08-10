@@ -1,17 +1,18 @@
-name: Publish Docker image on every push to master branch
+name: Publish Docker image on every push to master/dev branches
 
 on:
   push:
     branches:
       - master
+      - dev
     paths-ignore:
       - 'CHANGELOG.md'
       - '**/README.md'
       - 'docker-compose/*'
 env:
-  OTP_VERSION: ${{ vars.OTP_VERSION }}
-  ELIXIR_VERSION: ${{ vars.ELIXIR_VERSION }}
-  RELEASE_VERSION: 9.1.1
+  OTP_VERSION: '27.3.4.6'
+  ELIXIR_VERSION: '1.19.4'
+  RELEASE_VERSION: 11.2.3
 
 permissions:
   contents: read
@@ -20,7 +21,7 @@ permissions:
 jobs:
   push_to_registry:
     name: Push Docker image to GitHub Container Registry
-    runs-on: ubuntu-latest
+    runs-on: build
     steps:
       - uses: actions/checkout@v5
       - name: Setup repo
@@ -40,7 +41,7 @@ jobs:
           push: true
           cache-from: type=registry,ref=ghcr.io/blockscout/blockscout-private:buildcache
           cache-to: type=registry,ref=ghcr.io/blockscout/blockscout-private:buildcache,mode=max
-          tags: ghcr.io/blockscout/blockscout-private:master, ghcr.io/blockscout/blockscout-private:${{ env.RELEASE_VERSION }}.commit.${{ env.SHORT_SHA }}
+          tags: ghcr.io/blockscout/blockscout-private:${{ github.ref_name }}, ghcr.io/blockscout/blockscout-private:${{ env.RELEASE_VERSION }}.commit.${{ env.SHORT_SHA }}
           labels: ${{ steps.setup.outputs.docker-labels }}
           platforms: |
             linux/amd64

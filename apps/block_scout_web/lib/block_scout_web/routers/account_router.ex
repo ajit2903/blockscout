@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.Routers.AccountRouter do
   @moduledoc """
   Router for account-related requests
@@ -36,7 +37,7 @@ defmodule BlockScoutWeb.Routers.AccountRouter do
     plug(BlockScoutWeb.ChecksumAddress)
   end
 
-  pipeline :account_api do
+  pipeline :account_api_v2 do
     plug(
       Plug.Parsers,
       parsers: [:urlencoded, :multipart, :json],
@@ -46,14 +47,17 @@ defmodule BlockScoutWeb.Routers.AccountRouter do
       json_decoder: Poison
     )
 
-    plug(BlockScoutWeb.Plug.Logger, application: :api)
+    plug(BlockScoutWeb.Plug.Logger, application: :api_v2)
     plug(:accepts, ["json"])
     plug(:fetch_session)
     plug(:protect_from_forgery)
     plug(CheckAccountAPI)
+    plug(OpenApiSpex.Plug.PutApiSpec, module: BlockScoutWeb.Specs.Private)
   end
 
-  pipeline :api do
+  pipeline :account_api_v2_no_protect_from_forgery do
+    plug(CheckAccountAPI)
+
     plug(
       Plug.Parsers,
       parsers: [:urlencoded, :multipart, :json],
@@ -63,8 +67,9 @@ defmodule BlockScoutWeb.Routers.AccountRouter do
       json_decoder: Poison
     )
 
-    plug(BlockScoutWeb.Plug.Logger, application: :api)
+    plug(BlockScoutWeb.Plug.Logger, application: :api_v2)
     plug(:accepts, ["json"])
+    plug(OpenApiSpex.Plug.PutApiSpec, module: BlockScoutWeb.Specs.Private)
   end
 
   scope "/auth", BlockScoutWeb do
@@ -112,7 +117,7 @@ defmodule BlockScoutWeb.Routers.AccountRouter do
   end
 
   scope "/v2", as: :account_v2 do
-    pipe_through(:account_api)
+    pipe_through(:account_api_v2)
 
     get("/authenticate", AuthenticateController, :authenticate_get)
     post("/authenticate", AuthenticateController, :authenticate_post)
@@ -163,8 +168,7 @@ defmodule BlockScoutWeb.Routers.AccountRouter do
   end
 
   scope "/v2" do
-    pipe_through(:api)
-    pipe_through(:account_api)
+    pipe_through(:account_api_v2)
 
     scope "/tags" do
       get("/address/:address_hash", TagsController, :tags_address)
@@ -174,9 +178,10 @@ defmodule BlockScoutWeb.Routers.AccountRouter do
   end
 
   scope "/v2" do
-    pipe_through(:api)
+    pipe_through(:account_api_v2_no_protect_from_forgery)
 
     post("/authenticate_via_wallet", AuthenticateController, :authenticate_via_wallet)
+    get("/authenticate_via_dynamic", AuthenticateController, :authenticate_via_dynamic)
     post("/send_otp", AuthenticateController, :send_otp)
     post("/confirm_otp", AuthenticateController, :confirm_otp)
     get("/siwe_message", AuthenticateController, :siwe_message)

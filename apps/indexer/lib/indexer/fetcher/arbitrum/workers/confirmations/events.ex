@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.Arbitrum.Workers.Confirmations.Events do
   @moduledoc """
   Provides functionality for fetching and parsing Arbitrum's SendRootUpdated events.
@@ -70,7 +71,7 @@ defmodule Indexer.Fetcher.Arbitrum.Workers.Confirmations.Events do
           {cached_logs, cache}
       end
 
-    if length(logs) > 0 do
+    unless Enum.empty?(logs) do
       log_debug("Found #{length(logs)} SendRootUpdated logs")
     end
 

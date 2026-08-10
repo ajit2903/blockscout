@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule BlockScoutWeb.AddressView do
   use BlockScoutWeb, :view
 
@@ -8,8 +9,8 @@ defmodule BlockScoutWeb.AddressView do
   alias BlockScoutWeb.API.V2.TransactionView, as: APIV2TransactionView
   alias Explorer.Account.CustomABI
   alias Explorer.{Chain, CustomContractsHelper, Repo}
-  alias Explorer.Chain.Address.Counters
   alias Explorer.Chain.{Address, Hash, InternalTransaction, Log, SmartContract, Token, TokenTransfer, Transaction, Wei}
+  alias Explorer.Chain.Address.Counters
   alias Explorer.Chain.Block.Reward
   alias Explorer.Chain.SmartContract.Proxy.Models.Implementation
   alias Explorer.Market.Token, as: TokenExchangeRate
@@ -275,7 +276,7 @@ defmodule BlockScoutWeb.AddressView do
   end
 
   def transaction_hash(%Address{contract_creation_internal_transaction: %InternalTransaction{}} = address) do
-    address.contract_creation_internal_transaction.transaction_hash
+    InternalTransaction.preload_transaction(address.contract_creation_internal_transaction).transaction_hash
   end
 
   def transaction_hash(%Address{contract_creation_transaction: %Transaction{}} = address) do

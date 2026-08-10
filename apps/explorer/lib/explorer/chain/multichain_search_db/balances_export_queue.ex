@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.MultichainSearchDb.BalancesExportQueue do
   @moduledoc """
   Tracks token and coin balances, pending for export to the Multichain Service database.
@@ -6,8 +7,8 @@ defmodule Explorer.Chain.MultichainSearchDb.BalancesExportQueue do
   use Explorer.Schema
   import Ecto.Query
   alias Ecto.Multi
-  alias Explorer.Repo
   alias Explorer.Chain.{Hash, Wei}
+  alias Explorer.Repo
 
   @required_attrs ~w(address_hash token_contract_address_hash_or_native)a
   @optional_attrs ~w(value token_id retries_number)a

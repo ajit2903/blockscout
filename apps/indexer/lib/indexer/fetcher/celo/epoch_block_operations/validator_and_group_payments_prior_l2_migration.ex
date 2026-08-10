@@ -1,11 +1,12 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Indexer.Fetcher.Celo.EpochBlockOperations.ValidatorAndGroupPaymentsPriorL2Migration do
   @moduledoc """
   Fetches validator and group payments for the epoch block.
   """
   import Ecto.Query, only: [from: 2]
 
-  alias Explorer.Chain.Cache.CeloCoreContracts
   alias Explorer.Chain.{Block, Celo.Epoch, Log}
+  alias Explorer.Chain.Cache.CeloCoreContracts
   alias Explorer.Repo
   alias Indexer.Transform.Celo.ValidatorEpochPaymentDistributions
 

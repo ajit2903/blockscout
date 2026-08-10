@@ -252,7 +252,7 @@ defmodule Explorer.Chain.TransactionTest do
     test "that a transaction that is not a contract call returns a commensurate error" do
       transaction = insert(:transaction)
 
-      assert {:error, :not_a_contract_call} = Transaction.decoded_input_data(transaction, [])
+      assert {{:error, :not_a_contract_call}, _, _} = Transaction.decoded_input_data(transaction, [])
     end
 
     test "that a contract call transaction that has no verified contract returns a commensurate error" do
@@ -261,26 +261,20 @@ defmodule Explorer.Chain.TransactionTest do
         |> insert(to_address: insert(:contract_address), input: "0x1234567891")
         |> Repo.preload(to_address: :smart_contract)
 
-      assert {:error, :contract_not_verified, []} = Transaction.decoded_input_data(transaction, [])
+      assert {{:error, :contract_not_verified, []}, _, _} = Transaction.decoded_input_data(transaction, [])
     end
 
     test "that a contract call transaction that has a verified contract returns the decoded input data" do
-      EthereumJSONRPC.Mox
-      |> TestHelper.mock_generic_proxy_requests()
-
       transaction =
         :transaction_to_verified_contract
         |> insert()
         |> Repo.preload(to_address: :smart_contract)
 
-      assert {:ok, "60fe47b1", "set(uint256 x)", [{"x", "uint256", 50}]} =
+      assert {{:ok, "60fe47b1", "set(uint256 x)", [{"x", "uint256", 50}]}, _, _} =
                Transaction.decoded_input_data(transaction, [])
     end
 
     test "that a contract call will look up a match in contract_methods table" do
-      EthereumJSONRPC.Mox
-      |> TestHelper.mock_generic_proxy_requests()
-
       :transaction_to_verified_contract
       |> insert()
       |> Repo.preload(to_address: :smart_contract)
@@ -297,14 +291,11 @@ defmodule Explorer.Chain.TransactionTest do
         |> insert(to_address: contract.address, input: "0x" <> input_data)
         |> Repo.preload(to_address: :smart_contract)
 
-      assert {:ok, "60fe47b1", "set(uint256 x)", [{"x", "uint256", 10}]} =
+      assert {{:ok, "60fe47b1", "set(uint256 x)", [{"x", "uint256", 10}]}, _, _} =
                Transaction.decoded_input_data(transaction, [])
     end
 
     test "arguments name in function call replaced with argN if it's empty string" do
-      EthereumJSONRPC.Mox
-      |> TestHelper.mock_generic_proxy_requests()
-
       contract =
         insert(:smart_contract,
           contract_code_md5: "123",
@@ -332,7 +323,7 @@ defmodule Explorer.Chain.TransactionTest do
         |> insert(to_address: contract.address, input: "0x" <> input_data)
         |> Repo.preload(to_address: :smart_contract)
 
-      assert {:ok, "60fe47b1", "set(uint256 arg0)", [{"arg0", "uint256", 10}]} =
+      assert {{:ok, "60fe47b1", "set(uint256 arg0)", [{"arg0", "uint256", 10}]}, _, _} =
                Transaction.decoded_input_data(transaction, [])
     end
   end
@@ -871,12 +862,34 @@ defmodule Explorer.Chain.TransactionTest do
     end
   end
 
-  describe "get_method_name/1" do
-    test "returns method name for transaction with input data starting with 0x" do
-      transaction =
-        :transaction |> insert(input: "0x3078f1140ab0ba")
+  describe "signed_authorizations association" do
+    test "preloads signed authorizations belonging to the transaction" do
+      transaction = insert(:transaction)
 
-      assert "0x3078f114" == Transaction.get_method_name(transaction)
+      signed_authorization = insert(:signed_authorization, transaction_hash: transaction.hash, index: 0)
+
+      other_transaction = insert(:transaction)
+      insert(:signed_authorization, transaction_hash: other_transaction.hash, index: 0)
+
+      preloaded_transaction =
+        Transaction
+        |> Repo.get(transaction.hash)
+        |> Repo.preload(:signed_authorizations)
+
+      assert [loaded_signed_authorization] = preloaded_transaction.signed_authorizations
+      assert loaded_signed_authorization.transaction_hash == transaction.hash
+      assert loaded_signed_authorization.index == signed_authorization.index
+    end
+
+    test "returns an empty list when the transaction has no signed authorizations" do
+      transaction = insert(:transaction)
+
+      preloaded_transaction =
+        Transaction
+        |> Repo.get(transaction.hash)
+        |> Repo.preload(:signed_authorizations)
+
+      assert preloaded_transaction.signed_authorizations == []
     end
   end
 end

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LicenseRef-Blockscout
 defmodule Explorer.Chain.Beacon.Reader do
   @moduledoc "Contains read functions for beacon chain related modules."
 
@@ -18,8 +19,8 @@ defmodule Explorer.Chain.Beacon.Reader do
   import Explorer.Chain, only: [select_repo: 1]
 
   alias Explorer.{Chain, Repo}
-  alias Explorer.Chain.{Block, DenormalizationHelper, Hash, Transaction}
   alias Explorer.Chain.Beacon.{Blob, BlobTransaction}
+  alias Explorer.Chain.{Block, DenormalizationHelper, Hash, Transaction}
 
   @doc """
   Finds `t:Explorer.Chain.Beacon.Blob.t/0` by its `hash`.
