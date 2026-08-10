@@ -1,15 +1,22 @@
 version: 2.1
 
 jobs:
-  noop:
+  test-ethereum-tooling:
     docker:
-      - image: cimg/base:current
+      - image: cimg/node:20.19
     steps:
+      - checkout
       - run:
-          name: No-op
-          command: echo "No CircleCI pipeline configured for this repository."
+          name: Install locked dependencies
+          command: npm ci --ignore-scripts
+      - run:
+          name: Run tooling tests
+          command: npm test
+      - run:
+          name: Audit production dependencies
+          command: npm audit --audit-level=moderate
 
 workflows:
-  noop-workflow:
+  ethereum-tooling-ci:
     jobs:
-      - noop
+      - test-ethereum-tooling
