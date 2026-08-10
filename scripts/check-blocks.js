@@ -1,5 +1,7 @@
 const { ethers } = require('ethers')
 
+const MAX_BLOCK_RANGE = 1000
+
 function parseInteger (name, value, positive = false) {
   if (!/^\d+$/.test(value)) {
     throw new Error(`${name} must be a ${positive ? 'positive' : 'non-negative'} integer`)
@@ -28,6 +30,10 @@ function getBlockRange (env, latestBlock) {
 
   if (startBlock > endBlock) {
     throw new Error('START_BLOCK must be less than or equal to END_BLOCK')
+  }
+
+  if (endBlock - startBlock + 1 > MAX_BLOCK_RANGE) {
+    throw new Error(`Block range must not exceed ${MAX_BLOCK_RANGE} blocks`)
   }
 
   return { endBlock, startBlock }
@@ -68,4 +74,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { getBlockRange, main, parseInteger }
+module.exports = { getBlockRange, main, parseInteger, MAX_BLOCK_RANGE }
