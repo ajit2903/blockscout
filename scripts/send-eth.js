@@ -1,4 +1,12 @@
 const { ethers } = require('ethers')
+const funding = require('../FUNDING.json')
+
+const FUNDING_CHAIN_BY_ID = new Map([
+  ['1', 'ethereum'],
+  ['10', 'optimism'],
+  ['314', 'filecoin'],
+  ['1088', 'metis']
+])
 
 function required (env, name) {
   const value = env[name]
@@ -10,15 +18,10 @@ function required (env, name) {
   return value
 }
 
-function loadConfig (env = process.env) {
+function loadConfig (env = process.env, fundingConfig = funding) {
   const rpcUrl = required(env, 'RPC_URL')
-  const toAddress = required(env, 'TO_ADDRESS')
   const amountEth = required(env, 'AMOUNT_ETH')
   const chainIdInput = required(env, 'CHAIN_ID')
-
-  if (!ethers.isAddress(toAddress)) {
-    throw new Error('TO_ADDRESS must be a valid Ethereum address')
-  }
 
   if (!/^\d+$/.test(chainIdInput)) {
     throw new Error('CHAIN_ID must be a positive integer')
@@ -27,6 +30,21 @@ function loadConfig (env = process.env) {
   const chainId = BigInt(chainIdInput)
   if (chainId <= 0n) {
     throw new Error('CHAIN_ID must be a positive integer')
+  }
+
+  const fundingChain = FUNDING_CHAIN_BY_ID.get(chainId.toString())
+  if (!fundingChain) {
+    throw new Error(`CHAIN_ID ${chainId} does not have a configured funding wallet`)
+  }
+
+  const configuredAddress = fundingConfig.drips?.[fundingChain]?.ownedBy
+  if (!configuredAddress || !ethers.isAddress(configuredAddress)) {
+    throw new Error(`FUNDING.json must define a valid ${fundingChain}.ownedBy address`)
+  }
+
+  const toAddress = ethers.getAddress(configuredAddress)
+  if (env.TO_ADDRESS && ethers.getAddress(env.TO_ADDRESS) !== toAddress) {
+    throw new Error(`TO_ADDRESS cannot override configured funding wallet ${toAddress}`)
   }
 
   let value
@@ -45,8 +63,7 @@ function loadConfig (env = process.env) {
   }
 
   const broadcast = env.BROADCAST === 'true'
-  const normalizedToAddress = ethers.getAddress(toAddress)
-  const confirmation = `SEND ${amountEth} ETH TO ${normalizedToAddress} ON CHAIN ${chainId}`
+  const confirmation = `SEND ${amountEth} ETH TO ${toAddress} ON CHAIN ${chainId}`
   let privateKey
 
   if (broadcast) {
@@ -62,9 +79,10 @@ function loadConfig (env = process.env) {
     broadcast,
     chainId,
     confirmation,
+    fundingChain,
     privateKey,
     rpcUrl,
-    toAddress: normalizedToAddress,
+    toAddress,
     value
   }
 }
