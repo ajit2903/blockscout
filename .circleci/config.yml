@@ -1,0 +1,22 @@
+version: 2.1
+
+jobs:
+  test-ethereum-tooling:
+    docker:
+      - image: cimg/node:20.19
+    steps:
+      - checkout
+      - run:
+          name: Install locked dependencies
+          command: npm ci --ignore-scripts
+      - run:
+          name: Run tooling tests
+          command: npm test
+      - run:
+          name: Audit production dependencies
+          command: npm audit --audit-level=moderate
+
+workflows:
+  ethereum-tooling-ci:
+    jobs:
+      - test-ethereum-tooling
