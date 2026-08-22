@@ -16,8 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate Docker Compose
-        run: |
-          docker compose -f docker-compose/docker-compose.yml config
+        run: docker compose -f docker-compose/docker-compose.yml config
 
       - name: Run BuildBear CI
         uses: BuildBearLabs/[email protected]
