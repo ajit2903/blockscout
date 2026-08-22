@@ -18,7 +18,7 @@ jobs:
         run: docker compose -f docker-compose/docker-compose.yml config
 
       - name: Run BuildBear CI
-        uses: BuildBearLabs/&lt;verified-action-slug&gt;@&lt;verified-version&gt;
+        uses: BuildBearLabs/buildbear-ci-action@v1.0.0
         with:
           network: |
             [
