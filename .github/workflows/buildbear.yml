@@ -1,0 +1,28 @@
+name: BuildBear CI/CD
+
+on:
+  push:
+    branches:
+      - master
+      - ajit2903-patch-6
+  workflow_dispatch:
+
+jobs:
+  buildbear:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run BuildBear CI
+        uses: BuildBearLabs/[email protected]
+        with:
+          network: |
+            [
+              {
+                "chainId": 1
+              }
+            ]
+          deploy-command: "echo BuildBear CI/CD"
+          buildbear-api-key: "${{ secrets.BUILDBEAR_TOKEN }}"
