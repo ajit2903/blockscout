@@ -1,3 +1,4 @@
+
 name: BuildBear CI/CD
 
 on:
@@ -15,6 +16,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate Docker Compose
+        run: |
+          docker compose -f docker-compose/docker-compose.yml config
+
       - name: Run BuildBear CI
         uses: BuildBearLabs/[email protected]
         with:
@@ -24,5 +29,5 @@ jobs:
                 "chainId": 1
               }
             ]
-          deploy-command: "echo BuildBear CI/CD"
+          deploy-command: "docker compose -f docker-compose/docker-compose.yml config"
           buildbear-api-key: "${{ secrets.BUILDBEAR_TOKEN }}"
