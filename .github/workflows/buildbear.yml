@@ -19,7 +19,7 @@ jobs:
         run: docker compose -f docker-compose/docker-compose.yml config
 
       - name: Run BuildBear CI
-        uses: BuildBearLabs/[email protected]
+        uses: BuildBearLabs/buildbear-github-action@v1
         with:
           network: |
             [
@@ -28,4 +28,6 @@ jobs:
               }
             ]
           deploy-command: docker compose -f docker-compose/docker-compose.yml up -d
-          buildbear-api-key: ${{ secrets.BUILDBEAR_TOKEN }}
+          buildbear-api-key: ${{ secrets.BUILDBEAR_API_KEY }}
+        env:
+          BUILDBEAR_BASE_URL: https://api.buildbear.io
