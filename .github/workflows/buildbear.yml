@@ -1,33 +1,11 @@
-name: BuildBear CI/CD
-
-on:
-  push:
-    branches:
-      - master
-      - ajit2903-patch-6
-  workflow_dispatch:
-
-jobs:
-  buildbear:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Validate Docker Compose
-        run: docker compose -f docker-compose/docker-compose.yml config
-
-      - name: Run BuildBear CI
-        uses: BuildBearLabs/buildbear-github-action@v1
-        with:
-          network: |
-            [
-              {
-                "chainId": 1
-              }
-            ]
-          deploy-command: docker compose -f docker-compose/docker-compose.yml up -d
-          buildbear-api-key: ${{ secrets.BUILDBEAR_API_KEY }}
-        env:
-          BUILDBEAR_BASE_URL: https://api.buildbear.io
+- name: Run BuildBear CI
+  uses: BuildBearLabs/[email protected]
+  with:
+    network: |
+      [
+        {
+          "chainId": 1
+        }
+      ]
+    deploy-command: docker compose -f docker-compose/docker-compose.yml up -d
+    buildbear-api-key: ${{ secrets.BUILDBEAR_TOKEN }}
