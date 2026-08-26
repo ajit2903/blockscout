@@ -1,8 +1,8 @@
+
 'use strict';
 
 const login = document.querySelector('#login');
 const panel = document.querySelector('#panel');
-
 const loginError = document.querySelector('#loginError');
 const api = '/api/admin';
 
@@ -32,11 +32,13 @@ function showLogin() {
 }
 
 document.querySelector('#logout').addEventListener('click', async () => {
-  await request(`${api}/logout`, {
-    method: 'POST'
-  });
-
-  showLogin();
+  try {
+    await request(`${api}/logout`, {
+      method: 'POST'
+    });
+  } finally {
+    window.location.replace('/admin/login.html');
+  }
 });
 
 async function refreshDashboard() {
@@ -50,7 +52,8 @@ async function refreshDashboard() {
     document.querySelector('#latency').textContent =
       `${data.rpc.latencyMs} ms`;
 
-    document.querySelector('#chainId').textContent = data.network.chainId;
+    document.querySelector('#chainId').textContent =
+      data.network.chainId;
 
     document.querySelector('#latestBlock').textContent =
       data.network.latestBlock.toLocaleString();
@@ -66,7 +69,7 @@ async function refreshDashboard() {
     showPanel();
   } catch (error) {
     if (error.message === 'Authentication required') {
-      showLogin();
+      window.location.replace('/admin/login.html');
       return;
     }
 
@@ -98,6 +101,11 @@ document
 
       result.textContent = JSON.stringify(block, null, 2);
     } catch (error) {
+      if (error.message === 'Authentication required') {
+        window.location.replace('/admin/login.html');
+        return;
+      }
+
       result.textContent = error.message;
     }
   });
@@ -116,21 +124,34 @@ document
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          hash: document.querySelector('#transactionHash').value.trim()
+          hash: document
+            .querySelector('#transactionHash')
+            .value
+            .trim()
         })
       });
 
       result.textContent = JSON.stringify(transaction, null, 2);
     } catch (error) {
+      if (error.message === 'Authentication required') {
+        window.location.replace('/admin/login.html');
+        return;
+      }
+
       result.textContent = error.message;
     }
   });
 
-const authError = new URLSearchParams(window.location.search).get('auth');
+const authError = new URLSearchParams(
+  window.location.search
+).get('auth');
+
 if (authError === 'denied') {
-  loginError.textContent = 'This GitHub account is not an approved admin.';
+  loginError.textContent =
+    'This GitHub account is not an approved admin.';
 } else if (authError === 'failed') {
-  loginError.textContent = 'GitHub sign-in failed. Please try again.';
+  loginError.textContent =
+    'GitHub sign-in failed. Please try again.';
 }
 
 refreshDashboard();
