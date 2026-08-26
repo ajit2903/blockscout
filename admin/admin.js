@@ -3,8 +3,8 @@
 const login = document.querySelector('#login');
 const panel = document.querySelector('#panel');
 
-const loginForm = document.querySelector('#loginForm');
 const loginError = document.querySelector('#loginError');
+const api = '/api/admin';
 
 async function request(url, options = {}) {
   const response = await fetch(url, {
@@ -24,8 +24,6 @@ async function request(url, options = {}) {
 function showPanel() {
   login.hidden = true;
   panel.hidden = false;
-
-  refreshDashboard();
 }
 
 function showLogin() {
@@ -33,32 +31,8 @@ function showLogin() {
   panel.hidden = true;
 }
 
-loginForm.addEventListener('submit', async event => {
-  event.preventDefault();
-
-  loginError.textContent = '';
-
-  try {
-    await request('/api/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        username: document.querySelector('#username').value,
-        password: document.querySelector('#password').value
-      })
-    });
-
-    loginForm.reset();
-    showPanel();
-  } catch (error) {
-    loginError.textContent = error.message;
-  }
-});
-
 document.querySelector('#logout').addEventListener('click', async () => {
-  await request('/api/logout', {
+  await request(`${api}/logout`, {
     method: 'POST'
   });
 
@@ -67,7 +41,7 @@ document.querySelector('#logout').addEventListener('click', async () => {
 
 async function refreshDashboard() {
   try {
-    const data = await request('/api/dashboard');
+    const data = await request(`${api}/dashboard`);
 
     document.querySelector('#rpcStatus').textContent = data.rpc.ok
       ? 'ONLINE'
@@ -88,6 +62,8 @@ async function refreshDashboard() {
       typeof data.network.syncing === 'object'
         ? JSON.stringify(data.network.syncing)
         : 'No';
+
+    showPanel();
   } catch (error) {
     if (error.message === 'Authentication required') {
       showLogin();
@@ -110,7 +86,7 @@ document
     const result = document.querySelector('#blockResult');
 
     try {
-      const block = await request('/api/block', {
+      const block = await request(`${api}/block`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -134,7 +110,7 @@ document
     const result = document.querySelector('#transactionResult');
 
     try {
-      const transaction = await request('/api/transaction', {
+      const transaction = await request(`${api}/transaction`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -150,4 +126,11 @@ document
     }
   });
 
-showLogin();
+const authError = new URLSearchParams(window.location.search).get('auth');
+if (authError === 'denied') {
+  loginError.textContent = 'This GitHub account is not an approved admin.';
+} else if (authError === 'failed') {
+  loginError.textContent = 'GitHub sign-in failed. Please try again.';
+}
+
+refreshDashboard();

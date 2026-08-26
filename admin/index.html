@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Ethereum Admin</title>
-    <link rel="stylesheet" href="/admin.css">
+    <link rel="stylesheet" href="/admin/admin.css">
   </head>
 
   <body>
@@ -13,24 +13,9 @@
         <h1>Ethereum Admin</h1>
         <p class="muted">Secure blockchain administration</p>
 
-        <form id="loginForm">
-          <label>
-            Username
-            <input id="username" autocomplete="username" required>
-          </label>
-
-          <label>
-            Password
-            <input
-              id="password"
-              type="password"
-              autocomplete="current-password"
-              required
-            >
-          </label>
-
-          <button type="submit">Sign in</button>
-        </form>
+        <a class="button github" href="/api/admin/login">
+          Sign in with GitHub
+        </a>
 
         <p id="loginError" class="error"></p>
       </section>
@@ -130,6 +115,6 @@
       </section>
     </main>
 
-    <script src="/admin.js"></script>
+    <script src="/admin/admin.js"></script>
   </body>
 </html>
