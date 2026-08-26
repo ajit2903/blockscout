@@ -125,11 +125,16 @@ before(async () => {
       res.writeHead(200, {
         'Content-Type': 'application/json'
       });
+      const result =
+        request.method === 'eth_getBlockByNumber'
+          ? { number: request.params[0] }
+          : results[request.method];
+
       res.end(
         JSON.stringify({
           jsonrpc: '2.0',
           id: request.id,
-          result: results[request.method]
+          result
         })
       );
     });
@@ -150,7 +155,7 @@ after(async () => {
 });
 
 test('uses signed, expiring, secure session cookies', async t => {
-  const loginResponse = await adminRequest('/api/login', {
+  const loginResponse = await adminRequest('/api/admin/login', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -172,7 +177,7 @@ test('uses signed, expiring, secure session cookies', async t => {
   assert.match(setCookie, /; Max-Age=43200/i);
 
   await t.test('accepts a valid signed session', async () => {
-    const response = await adminRequest('/api/dashboard', {
+    const response = await adminRequest('/api/admin/dashboard', {
       headers: {
         Cookie: cookie
       }
@@ -181,11 +186,40 @@ test('uses signed, expiring, secure session cookies', async t => {
     assert.equal(response.status, 200);
   });
 
+  await t.test('accepts block zero through the Vercel API route', async () => {
+    const response = await adminRequest('/api/admin/block', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({ number: 0 })
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { number: '0x0' });
+  });
+
+  await t.test('rejects oversized login payloads', async () => {
+    const response = await adminRequest('/api/admin/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        username: 'admin',
+        password: 'x'.repeat(16 * 1024)
+      })
+    });
+
+    assert.equal(response.status, 413);
+  });
+
   await t.test('rejects a tampered signature', async () => {
     const token = decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1));
     const replacement = token.endsWith('0') ? '1' : '0';
     const tampered = `${token.slice(0, -1)}${replacement}`;
-    const response = await adminRequest('/api/dashboard', {
+    const response = await adminRequest('/api/admin/dashboard', {
       headers: {
         Cookie: `admin_session=${encodeURIComponent(tampered)}`
       }
@@ -195,7 +229,7 @@ test('uses signed, expiring, secure session cookies', async t => {
   });
 
   await t.test('rejects an expired signed session', async () => {
-    const response = await adminRequest('/api/dashboard', {
+    const response = await adminRequest('/api/admin/dashboard', {
       headers: {
         Cookie: `admin_session=${encodeURIComponent(
           signedExpiredSession()
@@ -210,7 +244,7 @@ test('uses signed, expiring, secure session cookies', async t => {
     await stopAdmin();
     await startAdmin();
 
-    const response = await adminRequest('/api/dashboard', {
+    const response = await adminRequest('/api/admin/dashboard', {
       headers: {
         Cookie: cookie
       }
@@ -220,7 +254,7 @@ test('uses signed, expiring, secure session cookies', async t => {
   });
 
   await t.test('clears the secure cookie on logout', async () => {
-    const response = await adminRequest('/api/logout', {
+    const response = await adminRequest('/api/admin/logout', {
       method: 'POST',
       headers: {
         Cookie: cookie

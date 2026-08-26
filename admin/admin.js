@@ -5,6 +5,7 @@ const panel = document.querySelector('#panel');
 
 const loginForm = document.querySelector('#loginForm');
 const loginError = document.querySelector('#loginError');
+const api = '/api/admin';
 
 async function request(url, options = {}) {
   const response = await fetch(url, {
@@ -39,7 +40,7 @@ loginForm.addEventListener('submit', async event => {
   loginError.textContent = '';
 
   try {
-    await request('/api/login', {
+    await request(`${api}/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -58,7 +59,7 @@ loginForm.addEventListener('submit', async event => {
 });
 
 document.querySelector('#logout').addEventListener('click', async () => {
-  await request('/api/logout', {
+  await request(`${api}/logout`, {
     method: 'POST'
   });
 
@@ -67,7 +68,7 @@ document.querySelector('#logout').addEventListener('click', async () => {
 
 async function refreshDashboard() {
   try {
-    const data = await request('/api/dashboard');
+    const data = await request(`${api}/dashboard`);
 
     document.querySelector('#rpcStatus').textContent = data.rpc.ok
       ? 'ONLINE'
@@ -110,7 +111,7 @@ document
     const result = document.querySelector('#blockResult');
 
     try {
-      const block = await request('/api/block', {
+      const block = await request(`${api}/block`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -134,7 +135,7 @@ document
     const result = document.querySelector('#transactionResult');
 
     try {
-      const transaction = await request('/api/transaction', {
+      const transaction = await request(`${api}/transaction`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
