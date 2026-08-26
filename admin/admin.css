@@ -1,0 +1,148 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f5f7fa;
+  color: #17202a;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+.container {
+  width: min(1100px, 92%);
+  margin: 40px auto;
+}
+
+.card {
+  background: white;
+  border: 1px solid #dfe4ea;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.05);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.stat {
+  background: white;
+  border: 1px solid #dfe4ea;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.stat span {
+  display: block;
+  color: #68717d;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.stat strong {
+  font-size: 24px;
+}
+
+label {
+  display: block;
+  margin: 16px 0;
+  font-weight: 600;
+}
+
+input {
+  width: 100%;
+  margin-top: 7px;
+  padding: 12px;
+  border: 1px solid #cbd2d9;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  padding: 11px 17px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #e8ebef;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+}
+
+.row input {
+  flex: 1;
+  margin: 0;
+}
+
+pre {
+  margin-top: 18px;
+  padding: 16px;
+  background: #111827;
+  color: #f9fafb;
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 500px;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 12px;
+}
+
+dt {
+  font-weight: 700;
+}
+
+dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.muted {
+  color: #68717d;
+}
+
+.error {
+  color: #b42318;
+}
+
+.warning {
+  padding: 16px;
+  border: 1px solid #f0c36d;
+  background: #fff8e6;
+  border-radius: 8px;
+  margin-top: 20px;
+}
+
+@media (max-width: 700px) {
+  .grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .header,
+  .row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

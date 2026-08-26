@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ethereum Admin</title>
+    <link rel="stylesheet" href="/admin.css">
+  </head>
+
+  <body>
+    <main class="container">
+      <section id="login" class="card">
+        <h1>Ethereum Admin</h1>
+        <p class="muted">Secure blockchain administration</p>
+
+        <form id="loginForm">
+          <label>
+            Username
+            <input id="username" autocomplete="username" required>
+          </label>
+
+          <label>
+            Password
+            <input
+              id="password"
+              type="password"
+              autocomplete="current-password"
+              required
+            >
+          </label>
+
+          <button type="submit">Sign in</button>
+        </form>
+
+        <p id="loginError" class="error"></p>
+      </section>
+
+      <section id="panel" hidden>
+        <header class="header">
+          <div>
+            <h1>Blockchain Control Center</h1>
+            <p class="muted">Read-only Ethereum administration</p>
+          </div>
+
+          <button id="logout" class="secondary">
+            Log out
+          </button>
+        </header>
+
+        <section class="grid">
+          <article class="stat">
+            <span>RPC</span>
+            <strong id="rpcStatus">—</strong>
+          </article>
+
+          <article class="stat">
+            <span>Latency</span>
+            <strong id="latency">—</strong>
+          </article>
+
+          <article class="stat">
+            <span>Chain ID</span>
+            <strong id="chainId">—</strong>
+          </article>
+
+          <article class="stat">
+            <span>Latest Block</span>
+            <strong id="latestBlock">—</strong>
+          </article>
+        </section>
+
+        <section class="card">
+          <h2>Node</h2>
+
+          <dl>
+            <dt>Client</dt>
+            <dd id="client">—</dd>
+
+            <dt>Syncing</dt>
+            <dd id="syncing">—</dd>
+          </dl>
+
+          <button id="refresh">
+            Refresh status
+          </button>
+        </section>
+
+        <section class="card">
+          <h2>Block lookup</h2>
+
+          <form id="blockForm" class="row">
+            <input
+              id="blockNumber"
+              type="number"
+              min="0"
+              placeholder="Block number"
+              required
+            >
+
+            <button type="submit">
+              Inspect
+            </button>
+          </form>
+
+          <pre id="blockResult"></pre>
+        </section>
+
+        <section class="card">
+          <h2>Transaction lookup</h2>
+
+          <form id="transactionForm" class="row">
+            <input
+              id="transactionHash"
+              placeholder="0x transaction hash"
+              required
+            >
+
+            <button type="submit">
+              Inspect
+            </button>
+          </form>
+
+          <pre id="transactionResult"></pre>
+        </section>
+
+        <section class="warning">
+          This panel intentionally does not store private keys, sign
+          transactions, or transfer ETH.
+        </section>
+      </section>
+    </main>
+
+    <script src="/admin.js"></script>
+  </body>
+</html>
