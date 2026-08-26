@@ -1,11 +1,11 @@
 {
-  "name": "eth-transfer-tooling",
+  "name": "eth-block-admin",
   "version": "1.0.0",
   "private": true,
-  "description": "Scripts for creating, submitting, and confirming ETH transfers",
-  "main": "scripts/send-eth.js",
+  "description": "Authenticated read-only Ethereum block administration panel",
+  "main": "admin-server.js",
   "scripts": {
-    "send-eth": "node scripts/send-eth.js",
+    "admin": "node admin-server.js",
     "check-blocks": "node scripts/check-blocks.js",
     "test": "node --test scripts/*.test.js"
   },
