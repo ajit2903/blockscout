@@ -3,7 +3,6 @@
 const login = document.querySelector('#login');
 const panel = document.querySelector('#panel');
 
-const loginForm = document.querySelector('#loginForm');
 const loginError = document.querySelector('#loginError');
 const api = '/api/admin';
 
@@ -25,38 +24,12 @@ async function request(url, options = {}) {
 function showPanel() {
   login.hidden = true;
   panel.hidden = false;
-
-  refreshDashboard();
 }
 
 function showLogin() {
   login.hidden = false;
   panel.hidden = true;
 }
-
-loginForm.addEventListener('submit', async event => {
-  event.preventDefault();
-
-  loginError.textContent = '';
-
-  try {
-    await request(`${api}/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        username: document.querySelector('#username').value,
-        password: document.querySelector('#password').value
-      })
-    });
-
-    loginForm.reset();
-    showPanel();
-  } catch (error) {
-    loginError.textContent = error.message;
-  }
-});
 
 document.querySelector('#logout').addEventListener('click', async () => {
   await request(`${api}/logout`, {
@@ -89,6 +62,8 @@ async function refreshDashboard() {
       typeof data.network.syncing === 'object'
         ? JSON.stringify(data.network.syncing)
         : 'No';
+
+    showPanel();
   } catch (error) {
     if (error.message === 'Authentication required') {
       showLogin();
@@ -151,4 +126,11 @@ document
     }
   });
 
-showLogin();
+const authError = new URLSearchParams(window.location.search).get('auth');
+if (authError === 'denied') {
+  loginError.textContent = 'This GitHub account is not an approved admin.';
+} else if (authError === 'failed') {
+  loginError.textContent = 'GitHub sign-in failed. Please try again.';
+}
+
+refreshDashboard();

@@ -5,6 +5,7 @@ const http = require('node:http');
 const path = require('node:path');
 const {
   block,
+  callback,
   dashboard,
   login,
   logout,
@@ -14,8 +15,8 @@ const {
 const PORT = Number(process.env.ADMIN_PORT || 3000);
 const staticFiles = {
   '/admin': ['index.html', 'text/html; charset=utf-8'],
-  '/admin.css': ['admin.css', 'text/css; charset=utf-8'],
-  '/admin.js': ['admin.js', 'application/javascript; charset=utf-8']
+  '/admin/admin.css': ['admin.css', 'text/css; charset=utf-8'],
+  '/admin/admin.js': ['admin.js', 'application/javascript; charset=utf-8']
 };
 
 async function serveStatic(res, filename, contentType) {
@@ -48,6 +49,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/admin/login') return login(req, res);
+  if (pathname === '/api/admin/callback') return callback(req, res);
   if (pathname === '/api/admin/logout') return logout(req, res);
   if (pathname === '/api/admin/dashboard') return dashboard(req, res);
   if (pathname === '/api/admin/block') return block(req, res);

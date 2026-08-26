@@ -34,6 +34,7 @@ See the [project documentation](https://docs.blockscout.com/) for instructions:
 - [Ansible deployment](https://docs.blockscout.com/for-developers/ansible-deployment)
 - [ENV variables](https://docs.blockscout.com/setup/env-variables)
 - [Configuration options](https://docs.blockscout.com/for-developers/configuration-options)
+- [Vercel admin authentication](admin/README.md)
 
 ## Acknowledgements
 

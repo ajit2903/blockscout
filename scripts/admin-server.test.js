@@ -13,6 +13,10 @@ const sessionSecret = 'test-session-secret-'.repeat(4);
 
 let adminPort;
 let adminProcess;
+let oauthServer;
+let oauthTokenRequests = [];
+let oauthUserId = 123456;
+let oauthUrl;
 let rpcServer;
 let rpcUrl;
 
@@ -42,11 +46,17 @@ async function startAdmin() {
     env: {
       ...process.env,
       ADMIN_COOKIE_SECURE: 'true',
-      ADMIN_PASSWORD: 'correct horse battery staple',
       ADMIN_PORT: String(adminPort),
       ADMIN_SESSION_SECRET: sessionSecret,
-      ADMIN_USER: 'admin',
-      ETHEREUM_RPC_URL: rpcUrl
+      ETHEREUM_RPC_URL: rpcUrl,
+      GITHUB_ADMIN_IDS: '123456',
+      GITHUB_API_URL: `${oauthUrl}/user`,
+      GITHUB_AUTHORIZE_URL: `${oauthUrl}/login/oauth/authorize`,
+      GITHUB_CALLBACK_URL:
+        `http://127.0.0.1:${adminPort}/api/admin/callback`,
+      GITHUB_CLIENT_ID: 'test-client-id',
+      GITHUB_CLIENT_SECRET: 'test-client-secret',
+      GITHUB_TOKEN_URL: `${oauthUrl}/login/oauth/access_token`
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -88,12 +98,48 @@ function adminRequest(pathname, options = {}) {
   return fetch(`http://127.0.0.1:${adminPort}${pathname}`, options);
 }
 
+function responseCookies(response) {
+  if (typeof response.headers.getSetCookie === 'function') {
+    return response.headers.getSetCookie();
+  }
+
+  return (response.headers.get('set-cookie') || '')
+    .split(/,(?=\s*[^;,=\s]+=)/)
+    .map(value => value.trim());
+}
+
+async function beginLogin() {
+  const response = await adminRequest('/api/admin/login', {
+    redirect: 'manual'
+  });
+  const location = new URL(response.headers.get('location'));
+  const oauthCookie = responseCookies(response)[0].split(';')[0];
+
+  return { location, oauthCookie, response };
+}
+
+async function completeLogin(location, oauthCookie, state = null) {
+  const oauthState = state || location.searchParams.get('state');
+
+  return adminRequest(
+    `/api/admin/callback?code=test-code&state=${encodeURIComponent(
+      oauthState
+    )}`,
+    {
+      redirect: 'manual',
+      headers: { Cookie: oauthCookie }
+    }
+  );
+}
+
 function signedExpiredSession() {
   const expiresAt = Math.floor(Date.now() / 1000) - 1;
   const payload = Buffer.from(
     JSON.stringify({
       issuedAt: expiresAt - 12 * 60 * 60,
       expiresAt,
+      githubUserId: '123456',
+      githubLogin: 'test-admin',
       nonce: '0'.repeat(32)
     })
   ).toString('base64url');
@@ -106,6 +152,35 @@ function signedExpiredSession() {
 }
 
 before(async () => {
+  oauthServer = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/login/oauth/access_token') {
+      let raw = '';
+
+      req.on('data', chunk => {
+        raw += chunk;
+      });
+
+      req.on('end', () => {
+        oauthTokenRequests.push(new URLSearchParams(raw));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ access_token: 'test-access-token' }));
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/user') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: oauthUserId, login: 'test-admin' }));
+      return;
+    }
+
+    res.writeHead(404);
+    res.end();
+  });
+
+  const oauthPort = await listen(oauthServer);
+  oauthUrl = `http://127.0.0.1:${oauthPort}`;
+
   rpcServer = http.createServer((req, res) => {
     let raw = '';
 
@@ -149,32 +224,99 @@ before(async () => {
 after(async () => {
   await stopAdmin();
 
+  if (oauthServer) {
+    await new Promise(resolve => oauthServer.close(resolve));
+  }
+
   if (rpcServer) {
     await new Promise(resolve => rpcServer.close(resolve));
   }
 });
 
-test('uses signed, expiring, secure session cookies', async t => {
-  const loginResponse = await adminRequest('/api/admin/login', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      username: 'admin',
-      password: 'correct horse battery staple'
-    })
+test('uses GitHub OAuth and signed, secure session cookies', async t => {
+  const login = await beginLogin();
+
+  assert.equal(login.response.status, 302);
+  assert.equal(login.location.origin, oauthUrl);
+  assert.equal(login.location.pathname, '/login/oauth/authorize');
+  assert.equal(login.location.searchParams.get('client_id'), 'test-client-id');
+  assert.equal(login.location.searchParams.get('code_challenge_method'), 'S256');
+  assert.match(login.location.searchParams.get('code_challenge'), /^[\w-]{43}$/);
+  assert.match(login.location.searchParams.get('state'), /^[\w-]{43}$/);
+  assert.match(login.response.headers.get('set-cookie'), /; HttpOnly/i);
+  assert.match(login.response.headers.get('set-cookie'), /; SameSite=Lax/i);
+  assert.match(login.response.headers.get('set-cookie'), /; Secure/i);
+
+  await t.test('rejects a mismatched OAuth state', async () => {
+    const attemptsBefore = oauthTokenRequests.length;
+    const response = await completeLogin(
+      login.location,
+      login.oauthCookie,
+      'incorrect-state'
+    );
+
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/admin?auth=failed');
+    assert.equal(oauthTokenRequests.length, attemptsBefore);
   });
 
-  assert.equal(loginResponse.status, 200);
+  await t.test('rejects a GitHub user outside the admin allowlist', async () => {
+    oauthUserId = 999999;
 
-  const setCookie = loginResponse.headers.get('set-cookie');
-  const cookie = setCookie.split(';')[0];
+    try {
+      const deniedLogin = await beginLogin();
+      const response = await completeLogin(
+        deniedLogin.location,
+        deniedLogin.oauthCookie
+      );
 
-  assert.match(setCookie, /; HttpOnly/i);
-  assert.match(setCookie, /; SameSite=Strict/i);
-  assert.match(setCookie, /; Secure/i);
-  assert.match(setCookie, /; Max-Age=43200/i);
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get('location'), '/admin?auth=denied');
+      assert.equal(
+        responseCookies(response).some(value =>
+          value.startsWith('admin_session=')
+        ),
+        false
+      );
+    } finally {
+      oauthUserId = 123456;
+    }
+  });
+
+  const freshLogin = await beginLogin();
+  const callbackResponse = await completeLogin(
+    freshLogin.location,
+    freshLogin.oauthCookie
+  );
+  const callbackCookies = responseCookies(callbackResponse);
+  const sessionHeader = callbackCookies.find(value =>
+    value.startsWith('admin_session=')
+  );
+  const cookie = sessionHeader.split(';')[0];
+
+  assert.equal(callbackResponse.status, 302);
+  assert.equal(callbackResponse.headers.get('location'), '/admin');
+  assert.match(sessionHeader, /; HttpOnly/i);
+  assert.match(sessionHeader, /; SameSite=Strict/i);
+  assert.match(sessionHeader, /; Secure/i);
+  assert.match(sessionHeader, /; Max-Age=43200/i);
+  assert.equal(oauthTokenRequests.at(-1).get('code'), 'test-code');
+  assert.match(
+    oauthTokenRequests.at(-1).get('code_verifier'),
+    /^[\w-]{43}$/
+  );
+
+  await t.test('serves admin assets from deployment-safe paths', async () => {
+    const page = await adminRequest('/admin');
+    const html = await page.text();
+    const css = await adminRequest('/admin/admin.css');
+    const javascript = await adminRequest('/admin/admin.js');
+
+    assert.match(html, /href="\/admin\/admin\.css"/);
+    assert.match(html, /src="\/admin\/admin\.js"/);
+    assert.equal(css.status, 200);
+    assert.equal(javascript.status, 200);
+  });
 
   await t.test('accepts a valid signed session', async () => {
     const response = await adminRequest('/api/admin/dashboard', {
@@ -198,21 +340,6 @@ test('uses signed, expiring, secure session cookies', async t => {
 
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { number: '0x0' });
-  });
-
-  await t.test('rejects oversized login payloads', async () => {
-    const response = await adminRequest('/api/admin/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        username: 'admin',
-        password: 'x'.repeat(16 * 1024)
-      })
-    });
-
-    assert.equal(response.status, 413);
   });
 
   await t.test('rejects a tampered signature', async () => {
