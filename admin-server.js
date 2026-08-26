@@ -12,7 +12,7 @@ const {
   transaction
 } = require('./lib/admin-service');
 
-const PORT = Number(process.env.ADMIN_PORT || 3000);
+const PORT = Number(process.env.PORT || process.env.ADMIN_PORT || 3000);
 const staticFiles = {
   '/admin': ['index.html', 'text/html; charset=utf-8'],
   '/admin/admin.css': ['admin.css', 'text/css; charset=utf-8'],
