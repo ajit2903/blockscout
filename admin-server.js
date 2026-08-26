@@ -10,6 +10,10 @@ const RPC_URL = process.env.ETHEREUM_RPC_URL;
 
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const SESSION_SECRET = process.env.ADMIN_SESSION_SECRET;
+
+const SESSION_TTL_SECONDS = 12 * 60 * 60;
+const COOKIE_SECURE = process.env.ADMIN_COOKIE_SECURE !== 'false';
 
 if (!RPC_URL) {
   throw new Error('ETHEREUM_RPC_URL is required');
@@ -19,11 +23,11 @@ if (!ADMIN_PASSWORD) {
   throw new Error('ADMIN_PASSWORD is required');
 }
 
-const SESSION_SECRET =
-  process.env.ADMIN_SESSION_SECRET ||
-  crypto.randomBytes(32).toString('hex');
-
-const sessions = new Map();
+if (!SESSION_SECRET || Buffer.byteLength(SESSION_SECRET) < 32) {
+  throw new Error(
+    'ADMIN_SESSION_SECRET must be at least 32 characters'
+  );
+}
 
 function json(res, status, body) {
   const data = JSON.stringify(body);
@@ -47,7 +51,11 @@ function parseCookies(req) {
     const key = part.slice(0, index).trim();
     const value = part.slice(index + 1).trim();
 
-    cookies[key] = decodeURIComponent(value);
+    try {
+      cookies[key] = decodeURIComponent(value);
+    } catch {
+      // Ignore malformed cookies instead of failing the entire request.
+    }
   }
 
   return cookies;
@@ -60,14 +68,49 @@ function sign(value) {
     .digest('hex');
 }
 
+function safeEqual(left, right) {
+  const leftDigest = crypto
+    .createHash('sha256')
+    .update(left)
+    .digest();
+  const rightDigest = crypto
+    .createHash('sha256')
+    .update(right)
+    .digest();
+
+  return crypto.timingSafeEqual(leftDigest, rightDigest);
+}
+
 function createSession() {
-  const id = crypto.randomBytes(32).toString('hex');
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(
+    JSON.stringify({
+      issuedAt,
+      expiresAt: issuedAt + SESSION_TTL_SECONDS,
+      nonce: crypto.randomBytes(16).toString('hex')
+    })
+  ).toString('base64url');
 
-  sessions.set(id, {
-    createdAt: Date.now()
-  });
+  return `${payload}.${sign(payload)}`;
+}
 
-  return id;
+function validSignature(value, signature) {
+  if (!/^[a-f0-9]{64}$/.test(signature || '')) return false;
+
+  return crypto.timingSafeEqual(
+    Buffer.from(sign(value), 'hex'),
+    Buffer.from(signature, 'hex')
+  );
+}
+
+function sessionCookie(value, maxAge) {
+  const secure = COOKIE_SECURE ? '; Secure' : '';
+
+  return (
+    `admin_session=${encodeURIComponent(value)}; ` +
+    'HttpOnly; SameSite=Strict; Path=/; ' +
+    `Max-Age=${maxAge}${secure}`
+  );
 }
 
 function authenticated(req) {
@@ -76,17 +119,28 @@ function authenticated(req) {
 
   if (!token) return false;
 
-  const session = sessions.get(token);
+  const parts = token.split('.');
 
-  if (!session) return false;
-
-  // 12-hour session lifetime.
-  if (Date.now() - session.createdAt > 12 * 60 * 60 * 1000) {
-    sessions.delete(token);
+  if (parts.length !== 2 || !validSignature(parts[0], parts[1])) {
     return false;
   }
 
-  return true;
+  try {
+    const session = JSON.parse(
+      Buffer.from(parts[0], 'base64url').toString('utf8')
+    );
+    const now = Math.floor(Date.now() / 1000);
+
+    return (
+      Number.isSafeInteger(session.issuedAt) &&
+      Number.isSafeInteger(session.expiresAt) &&
+      session.issuedAt <= now + 60 &&
+      session.expiresAt > now &&
+      session.expiresAt - session.issuedAt === SESSION_TTL_SECONDS
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function rpc(method, params = []) {
@@ -259,8 +313,10 @@ const server = http.createServer(async (req, res) => {
         const data = JSON.parse(raw || '{}');
 
         if (
-          data.username !== ADMIN_USER ||
-          data.password !== ADMIN_PASSWORD
+          typeof data.username !== 'string' ||
+          typeof data.password !== 'string' ||
+          !safeEqual(data.username, ADMIN_USER) ||
+          !safeEqual(data.password, ADMIN_PASSWORD)
         ) {
           return json(res, 401, {
             error: 'Invalid username or password'
@@ -271,9 +327,11 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
-          'Set-Cookie':
-            `admin_session=${encodeURIComponent(session)}; ` +
-            'HttpOnly; SameSite=Strict; Path=/; Max-Age=43200'
+          'Cache-Control': 'no-store',
+          'Set-Cookie': sessionCookie(
+            session,
+            SESSION_TTL_SECONDS
+          )
         });
 
         return res.end(
@@ -292,16 +350,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/logout') {
-    const cookies = parseCookies(req);
-
-    if (cookies.admin_session) {
-      sessions.delete(cookies.admin_session);
-    }
-
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
-      'Set-Cookie':
-        'admin_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'
+      'Cache-Control': 'no-store',
+      'Set-Cookie': sessionCookie('', 0)
     });
 
     return res.end(
