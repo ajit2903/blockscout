@@ -34,29 +34,37 @@ async function serveStatic(res, filename, contentType) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const pathname = new URL(
-    req.url,
-    `http://${req.headers.host || 'localhost'}`
-  ).pathname;
+  try {
+    const pathname = new URL(
+      req.url,
+      `http://${req.headers.host || 'localhost'}`
+    ).pathname;
 
-  if (req.method === 'GET' && pathname === '/') {
-    res.writeHead(302, { Location: '/admin' });
-    return res.end();
+    if (req.method === 'GET' && pathname === '/') {
+      res.writeHead(302, { Location: '/admin' });
+      return res.end();
+    }
+
+    if (req.method === 'GET' && staticFiles[pathname]) {
+      return await serveStatic(res, ...staticFiles[pathname]);
+    }
+
+    if (pathname === '/api/admin/login') return await login(req, res);
+    if (pathname === '/api/admin/callback') return await callback(req, res);
+    if (pathname === '/api/admin/logout') return await logout(req, res);
+    if (pathname === '/api/admin/dashboard') return await dashboard(req, res);
+    if (pathname === '/api/admin/block') return await block(req, res);
+    if (pathname === '/api/admin/transaction') return await transaction(req, res);
+
+    res.writeHead(404);
+    res.end('Not found');
+  } catch (err) {
+    console.error('Admin server error:', err);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
   }
-
-  if (req.method === 'GET' && staticFiles[pathname]) {
-    return serveStatic(res, ...staticFiles[pathname]);
-  }
-
-  if (pathname === '/api/admin/login') return login(req, res);
-  if (pathname === '/api/admin/callback') return callback(req, res);
-  if (pathname === '/api/admin/logout') return logout(req, res);
-  if (pathname === '/api/admin/dashboard') return dashboard(req, res);
-  if (pathname === '/api/admin/block') return block(req, res);
-  if (pathname === '/api/admin/transaction') return transaction(req, res);
-
-  res.writeHead(404);
-  res.end('Not found');
 });
 
 server.listen(PORT, () => {
