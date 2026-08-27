@@ -1,3 +1,4 @@
+
 version: '3.9'
 
 services:
@@ -18,8 +19,6 @@ services:
     extends:
       file: ./services/db.yml
       service: db
-    links:
-      - db-init:database
 
   backend:
     depends_on:
@@ -32,7 +31,6 @@ services:
       - db:database
     environment:
       ETHEREUM_JSONRPC_VARIANT: 'geth'
-      BLOCK_TRANSFORMER: 'clique'
       ADMIN_PANEL_ENABLED: 'true'
 
   visualizer:
