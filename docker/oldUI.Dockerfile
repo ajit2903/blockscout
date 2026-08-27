@@ -1,61 +1,16 @@
-name: Publish Docker image with admin panel
+FROM builder-ui AS builder
 
-on:
-  workflow_dispatch:
+ENV DISABLE_WEBAPP=false
 
-env:
-  OTP_VERSION: '27.3.4.6'
-  ELIXIR_VERSION: '1.19.4'
-  RELEASE_VERSION: 11.2.3
+ARG ADMIN_PANEL_ENABLED
+ENV ADMIN_PANEL_ENABLED=${ADMIN_PANEL_ENABLED}
 
-permissions:
-  contents: read
-  packages: write
+ARG DISABLE_API
+ENV DISABLE_API=${DISABLE_API}
 
-jobs:
-  push_to_registry:
-    name: Build and publish Blockscout with admin panel
-    runs-on: build
+# Run backend compilation
+RUN mix compile
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup repo
-        uses: ./.github/actions/setup-repo
-        id: setup
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          docker-remote-multi-platform: true
-          docker-arm-host: ${{ secrets.ARM_RUNNER_HOSTNAME }}
-          docker-arm-host-key: ${{ secrets.ARM_RUNNER_KEY }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./docker/oldUI.Dockerfile
-          push: true
-
-          cache-from: type=registry,ref=ghcr.io/blockscout/blockscout:buildcache
-          cache-to: type=registry,ref=ghcr.io/blockscout/blockscout:buildcache,mode=max
-
-          tags: |
-            ghcr.io/blockscout/blockscout:${{ env.RELEASE_VERSION }}-admin-panel
-            ghcr.io/blockscout/blockscout:${{ env.RELEASE_VERSION }}-admin-panel-${{ github.sha }}
-
-          labels: ${{ steps.setup.outputs.docker-labels }}
-
-          platforms: |
-            linux/amd64
-            linux/arm64/v8
-
-          build-args: |
-            ADMIN_PANEL_ENABLED=true
-            DECODE_NOT_A_CONTRACT_CALLS=false
-            MIXPANEL_URL=
-            MIXPANEL_TOKEN=
-            AMPLITUDE_URL=
-            AMPLITUDE_API_KEY=
-            BLOCKSCOUT_VERSION=v${{ env.RELEASE_VERSION }}
-            RELEASE_VERSION=${{ env.RELEASE_VERSION }}
+RUN mkdir -p /opt/release && \
+    mix release blockscout && \
+    mv _build/${MIX_ENV}/rel/blockscout /opt/release
