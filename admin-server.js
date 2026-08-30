@@ -19,7 +19,8 @@ const staticFiles = {
   '/admin/login.html': ['login.html', 'text/html; charset=utf-8'],
   '/admin/admin.css': ['admin.css', 'text/css; charset=utf-8'],
   '/admin/admin.js': ['admin.js', 'application/javascript; charset=utf-8'],
-  '/admin/speed-insights.mjs': ['speed-insights.mjs', 'application/javascript; charset=utf-8']
+  '/admin/speed-insights.mjs': ['speed-insights.mjs', 'application/javascript; charset=utf-8'],
+  '/admin/analytics.mjs': ['analytics.mjs', 'application/javascript; charset=utf-8']
 };
 
 async function serveStatic(res, filename, contentType) {
