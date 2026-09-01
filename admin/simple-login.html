@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Login</title>
+  <style>
+    body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f0f2f5; }
+    .box { background: #fff; padding: 32px; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.1); width: 320px; }
+    h2 { margin: 0 0 20px; text-align: center; }
+    input { display: block; width: 100%; padding: 10px; margin-bottom: 14px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }
+    button, .gh { display: block; width: 100%; padding: 11px; border: none; border-radius: 6px; font-size: 15px; font-weight: bold; cursor: pointer; text-align: center; text-decoration: none; box-sizing: border-box; }
+    button { background: #222; color: #fff; margin-bottom: 12px; }
+    .gh { background: #eee; color: #222; border: 1px solid #ccc; }
+    .or { text-align: center; color: #999; margin: 4px 0 12px; font-size: 13px; }
+    .err { color: red; font-size: 13px; margin-bottom: 10px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>Admin Login</h2>
+    <div id="err" class="err"></div>
+    <form method="POST" action="/admin/login" id="form">
+      <input type="text"     name="authenticate[username]" placeholder="Username" required>
+      <input type="password" name="authenticate[password]" placeholder="Password" required>
+      <button type="submit">Login</button>
+    </form>
+    <div class="or">— or —</div>
+    <a class="gh" href="/api/admin/login">Login with GitHub</a>
+  </div>
+  <script>
+    const p = new URLSearchParams(location.search);
+    const msgs = { invalid_credentials: 'Wrong username or password.', denied: 'GitHub account not authorized.', failed: 'GitHub login failed.' };
+    const key = p.get('error') || (p.get('auth') === 'denied' ? 'denied' : p.get('auth') === 'failed' ? 'failed' : null);
+    if (key && msgs[key]) { const e = document.getElementById('err'); e.textContent = msgs[key]; e.style.display = 'block'; }
+  </script>
+</body>
+</html>
