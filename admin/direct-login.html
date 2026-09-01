@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blockscout Admin — Login</title>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f5f7fa;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #17202a;
+    }
+
+    .card {
+      width: min(420px, calc(100% - 32px));
+      padding: 36px 32px;
+      background: #fff;
+      border: 1px solid #dfe4ea;
+      border-radius: 16px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.07);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .logo svg { flex-shrink: 0; }
+
+    h1 {
+      text-align: center;
+      font-size: 22px;
+      margin: 0 0 4px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #68717d;
+      font-size: 14px;
+      margin: 0 0 28px;
+    }
+
+    label {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1px solid #cbd2d9;
+      border-radius: 8px;
+      font-size: 15px;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    input[type="text"]:focus,
+    input[type="password"]:focus {
+      border-color: #4a90e2;
+      box-shadow: 0 0 0 3px rgba(74,144,226,.15);
+    }
+
+    .field { margin-bottom: 16px; }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 13px;
+      border: 0;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity .15s;
+    }
+
+    .btn:hover { opacity: .88; }
+
+    .btn-primary {
+      background: #24292f;
+      color: #fff;
+      margin-top: 4px;
+    }
+
+    .btn-github {
+      background: #f0f3f5;
+      color: #17202a;
+      border: 1px solid #dfe4ea;
+      margin-top: 12px;
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 24px 0 0;
+      color: #a0aab4;
+      font-size: 13px;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: #dfe4ea;
+    }
+
+    .error-msg {
+      background: #fff2f2;
+      border: 1px solid #f5c6c6;
+      color: #b42318;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      margin-bottom: 18px;
+      display: none;
+    }
+
+    .error-msg.visible { display: block; }
+
+    .setup-link {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 13px;
+      color: #68717d;
+    }
+
+    .setup-link a { color: #4a90e2; text-decoration: none; }
+    .setup-link a:hover { text-decoration: underline; }
+  </style>
+</head>
+
+<body>
+  <main class="card">
+
+    <div class="logo">
+      <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" rx="8" fill="#24292f"/>
+        <path d="M8 22L14 10L20 22M11 18H17" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="23" cy="11" r="3" fill="#4a90e2"/>
+      </svg>
+      <h1>Blockscout Admin</h1>
+    </div>
+    <p class="subtitle">Sign in to access the admin dashboard</p>
+
+    <div id="errorMsg" class="error-msg"></div>
+
+    <!-- Username / Password form — posts to Phoenix admin endpoint -->
+    <form id="loginForm" method="POST" action="/admin/login" novalidate>
+      <input type="hidden" name="_csrf_token" id="csrfToken" value="">
+
+      <div class="field">
+        <label for="username">Username</label>
+        <input
+          type="text"
+          id="username"
+          name="authenticate[username]"
+          autocomplete="username"
+          required
+          placeholder="admin"
+        >
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <input
+          type="password"
+          id="password"
+          name="authenticate[password]"
+          autocomplete="current-password"
+          required
+          placeholder="••••••••"
+        >
+      </div>
+
+      <button type="submit" class="btn btn-primary">
+        Login
+      </button>
+    </form>
+
+    <div class="divider">or</div>
+
+    <!-- GitHub OAuth — handled by the Node.js admin server -->
+    <a href="/api/admin/login" class="btn btn-github">
+      <svg height="20" width="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+          0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13
+          -.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66
+          .07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15
+          -.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27
+          .68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12
+          .51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48
+          0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+      </svg>
+      Login with GitHub
+    </a>
+
+    <div class="setup-link">
+      First time? <a href="/admin/setup">Set up admin account</a>
+    </div>
+
+  </main>
+
+  <script>
+    // Show error from query string (?error=invalid_credentials, etc.)
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get('error') || (params.get('auth') === 'denied' ? 'denied' : null);
+
+    const messages = {
+      invalid_credentials: 'Invalid username or password. Please try again.',
+      denied: 'This GitHub account is not an approved admin.',
+      failed: 'GitHub sign-in failed. Please try again.',
+      not_found: 'No admin account found. Please set up the admin first.'
+    };
+
+    if (err && messages[err]) {
+      const el = document.getElementById('errorMsg');
+      el.textContent = messages[err];
+      el.classList.add('visible');
+    }
+
+    // Basic client-side validation
+    document.getElementById('loginForm').addEventListener('submit', function (e) {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const el = document.getElementById('errorMsg');
+
+      if (!username || !password) {
+        e.preventDefault();
+        el.textContent = 'Please enter both username and password.';
+        el.classList.add('visible');
+      }
+    });
+  </script>
+</body>
+</html>

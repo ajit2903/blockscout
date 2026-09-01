@@ -17,6 +17,7 @@ const PORT = Number(process.env.ADMIN_PORT || 3000);
 const staticFiles = {
   '/admin': ['index.html', 'text/html; charset=utf-8'],
   '/admin/login.html': ['login.html', 'text/html; charset=utf-8'],
+  '/admin/direct-login.html': ['direct-login.html', 'text/html; charset=utf-8'],
   '/admin/admin.css': ['admin.css', 'text/css; charset=utf-8'],
   '/admin/admin.js': ['admin.js', 'application/javascript; charset=utf-8'],
   '/admin/speed-insights.mjs': ['speed-insights.mjs', 'application/javascript; charset=utf-8'],
