@@ -5,6 +5,9 @@ const login = document.querySelector('#login');
 const panel = document.querySelector('#panel');
 const loginError = document.querySelector('#loginError');
 const api = '/api/admin';
+const authError = new URLSearchParams(
+  window.location.search
+).get('auth');
 
 async function request(url, options = {}) {
   const response = await fetch(url, {
@@ -29,6 +32,11 @@ function showPanel() {
 function showLogin() {
   login.hidden = false;
   panel.hidden = true;
+}
+
+function redirectToLogin() {
+  const query = authError ? `?auth=${encodeURIComponent(authError)}` : '';
+  window.location.replace(`/admin/login.html${query}`);
 }
 
 document.querySelector('#logout').addEventListener('click', async () => {
@@ -69,7 +77,12 @@ async function refreshDashboard() {
     showPanel();
   } catch (error) {
     if (error.message === 'Authentication required') {
-      window.location.replace('/admin/login.html');
+      if (authError) {
+        showLogin();
+        return;
+      }
+
+      redirectToLogin();
       return;
     }
 
@@ -102,7 +115,7 @@ document
       result.textContent = JSON.stringify(block, null, 2);
     } catch (error) {
       if (error.message === 'Authentication required') {
-        window.location.replace('/admin/login.html');
+        redirectToLogin();
         return;
       }
 
@@ -134,17 +147,13 @@ document
       result.textContent = JSON.stringify(transaction, null, 2);
     } catch (error) {
       if (error.message === 'Authentication required') {
-        window.location.replace('/admin/login.html');
+        redirectToLogin();
         return;
       }
 
       result.textContent = error.message;
     }
   });
-
-const authError = new URLSearchParams(
-  window.location.search
-).get('auth');
 
 if (authError === 'denied') {
   loginError.textContent =

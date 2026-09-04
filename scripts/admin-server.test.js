@@ -311,11 +311,14 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
     const html = await page.text();
     const css = await adminRequest('/admin/admin.css');
     const javascript = await adminRequest('/admin/admin.js');
+    const javascriptText = await javascript.text();
 
     assert.match(html, /href="\/admin\/admin\.css"/);
     assert.match(html, /src="\/admin\/admin\.js"/);
     assert.equal(css.status, 200);
     assert.equal(javascript.status, 200);
+    assert.match(javascriptText, /encodeURIComponent\(authError\)/);
+    assert.match(javascriptText, /showLogin\(\);/);
   });
 
   await t.test('accepts a valid signed session', async () => {
