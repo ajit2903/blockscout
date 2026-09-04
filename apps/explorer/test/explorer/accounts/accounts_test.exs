@@ -91,6 +91,16 @@ defmodule Explorer.AccountsTest do
       assert result_user.id == user.id
     end
 
+    test "returns user when email credentials are valid", %{user: user} do
+      params = %{
+        username: Enum.at(user.contacts, 0).email,
+        password: "password"
+      }
+
+      assert {:ok, result_user} = Accounts.authenticate(params)
+      assert result_user.id == user.id
+    end
+
     test "returns error when params are invalid" do
       assert {:error, %Changeset{}} = Accounts.authenticate(%{})
     end

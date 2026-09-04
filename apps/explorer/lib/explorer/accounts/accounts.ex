@@ -6,7 +6,9 @@ defmodule Explorer.Accounts do
 
   alias Bcrypt
   alias Ecto.Changeset
-  alias Explorer.Accounts.User
+  import Ecto.Query
+
+  alias Explorer.Accounts.{User, UserContact}
   alias Explorer.Accounts.User.{Authenticate, Registration}
   alias Explorer.Repo
 
@@ -61,7 +63,7 @@ defmodule Explorer.Accounts do
       |> Changeset.apply_action(:insert)
 
     with {:ok, authentication} <- authentication,
-         {:user, %User{} = user} <- {:user, Repo.get_by(User, username: authentication.username)},
+         {:user, %User{} = user} <- {:user, get_user_by_username_or_email(authentication.username)},
          {:password, true} <- {:password, Bcrypt.verify_pass(authentication.password, user.password_hash)} do
       {:ok, user}
     else
@@ -76,6 +78,14 @@ defmodule Explorer.Accounts do
       {:password, false} ->
         {:error, :invalid_credentials}
     end
+  end
+
+  defp get_user_by_username_or_email(username_or_email) do
+    User
+    |> join(:left, [u], c in UserContact, on: c.user_id == u.id)
+    |> where([u, c], u.username == ^username_or_email or c.email == ^username_or_email)
+    |> distinct(true)
+    |> Repo.one()
   end
 
   @doc """

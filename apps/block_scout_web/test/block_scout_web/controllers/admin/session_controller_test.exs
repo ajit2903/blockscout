@@ -44,6 +44,20 @@ defmodule BlockScoutWeb.Admin.SessionControllerTest do
       assert redirected_to(result) == AdminRoutes.dashboard_path(conn, :index)
     end
 
+    test "redirects to dashboard on successful admin email login", %{conn: conn} do
+      admin = insert(:administrator)
+
+      params = %{
+        "authenticate" => %{
+          username: Enum.at(admin.user.contacts, 0).email,
+          password: "password"
+        }
+      }
+
+      result = post(conn, AdminRoutes.session_path(conn, :create), params)
+      assert redirected_to(result) == AdminRoutes.dashboard_path(conn, :index)
+    end
+
     test "reshows form if params are invalid", %{conn: conn} do
       insert(:administrator)
       params = %{"authenticate" => %{}}
