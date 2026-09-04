@@ -256,7 +256,7 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
     );
 
     assert.equal(response.status, 302);
-    assert.equal(response.headers.get('location'), '/admin?auth=failed');
+    assert.equal(response.headers.get('location'), '/admin/login.html?auth=failed');
     assert.equal(oauthTokenRequests.length, attemptsBefore);
   });
 
@@ -271,7 +271,7 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
       );
 
       assert.equal(response.status, 302);
-      assert.equal(response.headers.get('location'), '/admin?auth=denied');
+      assert.equal(response.headers.get('location'), '/admin/login.html?auth=denied');
       assert.equal(
         responseCookies(response).some(value =>
           value.startsWith('admin_session=')
