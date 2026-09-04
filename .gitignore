@@ -66,9 +66,10 @@ dump.rdb
 
 **.dec**
 
-*.env.example
-*.env.local
+.env
+.env.local
 *.env.staging
+!/.env.example
 .devcontainer/.blockscout_config*
 
 # dets tables
