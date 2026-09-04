@@ -70,6 +70,8 @@ config :block_scout_web,
   hide_scam_addresses: ConfigHelper.parse_bool_env_var("HIDE_SCAM_ADDRESSES"),
   show_tenderly_link: ConfigHelper.parse_bool_env_var("SHOW_TENDERLY_LINK"),
   sensitive_endpoints_api_key: System.get_env("API_SENSITIVE_ENDPOINTS_KEY"),
+  admin_one_time_login_id: ConfigHelper.safe_get_env("ADMIN_ONE_TIME_LOGIN_ID", nil),
+  admin_one_time_password: ConfigHelper.safe_get_env("ADMIN_ONE_TIME_PASSWORD", nil),
   disable_api?: disable_api?
 
 config :block_scout_web, :recaptcha,

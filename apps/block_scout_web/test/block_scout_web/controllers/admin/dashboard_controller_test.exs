@@ -2,6 +2,7 @@
 defmodule BlockScoutWeb.Admin.DashboardControllerTest do
   use BlockScoutWeb.ConnCase
 
+  alias BlockScoutWeb.Admin.OneTimeLogin
   alias BlockScoutWeb.Router
 
   describe "index/2" do
@@ -20,6 +21,18 @@ defmodule BlockScoutWeb.Admin.DashboardControllerTest do
     end
 
     test "shows the dashboard page", %{conn: conn} do
+      result = get(conn, "/admin" <> AdminRoutes.dashboard_path(conn, :index))
+      assert html_response(result, 200) =~ "administrator_dashboard"
+    end
+
+    test "shows the dashboard page for a one-time admin session", %{conn: conn} do
+      conn =
+        conn
+        |> delete_session(:user_id)
+        |> put_session(OneTimeLogin.session_key(), true)
+        |> send_resp(200, "")
+        |> recycle()
+
       result = get(conn, "/admin" <> AdminRoutes.dashboard_path(conn, :index))
       assert html_response(result, 200) =~ "administrator_dashboard"
     end
