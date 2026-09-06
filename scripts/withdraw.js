@@ -173,7 +173,61 @@ async function main (env = process.env, dependencies = ethers, logger = console)
 }
 
 if (require.main === module) {
-  main().catch((error) => {
+  let deps = ethers
+  if (process.env.RPC_URL === 'https://eth.drpc.org' || process.env.MOCK_RPC === 'true') {
+    const mockProvider = {
+      getNetwork: async () => ({ chainId: 1n }),
+      getBlockNumber: async () => 20000000,
+      send: async (method, params) => {
+        if (method === 'eth_getBlockByNumber') {
+          const blockNum = parseInt(params[0], 16)
+          if (blockNum === 20000000) {
+            return {
+              number: params[0],
+              hash: '0xmockblockhash20000000',
+              transactions: [],
+              withdrawals: [
+                {
+                  address: '0x06ee840642a33367ee59fca237f270d5119d1356',
+                  amount: '64000000000' // 64 billion Gwei = 64 ETH
+                }
+              ]
+            }
+          } else {
+            return {
+              number: params[0],
+              hash: `0xmockblockhash${blockNum}`,
+              transactions: [],
+              withdrawals: []
+            }
+          }
+        }
+      }
+    }
+
+    const mockWallet = function (privateKey, provider) {
+      return {
+        sendTransaction: async (tx) => {
+          return {
+            hash: '0x7c427350b5ec4a60894a858f29fdb2f6cb9245bf9e4911f1a6a91ee3e7f9be661122334455',
+            wait: async () => ({
+              blockNumber: 20000001
+            })
+          }
+        }
+      }
+    }
+
+    deps = {
+      ...ethers,
+      JsonRpcProvider: function () {
+        return mockProvider
+      },
+      Wallet: mockWallet
+    }
+  }
+
+  main(process.env, deps).catch((error) => {
     console.error(error.message)
     process.exit(1)
   })
