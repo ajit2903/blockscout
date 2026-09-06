@@ -21,12 +21,12 @@ function getBlockRange (env, latestBlock) {
   }
 
   const blockCount = parseInteger('BLOCK_COUNT', env.BLOCK_COUNT || '1', true)
-  const startBlock = env.START_BLOCK
-    ? parseInteger('START_BLOCK', env.START_BLOCK)
-    : Math.max(latestBlock - blockCount + 1, 0)
   const endBlock = env.END_BLOCK
     ? parseInteger('END_BLOCK', env.END_BLOCK)
     : latestBlock
+  const startBlock = env.START_BLOCK
+    ? parseInteger('START_BLOCK', env.START_BLOCK)
+    : Math.max(endBlock - blockCount + 1, 0)
 
   if (startBlock > endBlock) {
     throw new Error('START_BLOCK must be less than or equal to END_BLOCK')
@@ -81,7 +81,12 @@ async function main (env = process.env, dependencies = ethers, logger = console)
       // Ethers Block class
       number = block.number
       hash = block.hash
-      const prefetched = block.prefetchedTransactions || block.transactions || []
+      let prefetched = []
+      try {
+        prefetched = block.prefetchedTransactions || block.transactions || []
+      } catch {
+        prefetched = block.transactions || []
+      }
       for (const tx of prefetched) {
         if (tx && typeof tx === 'object') {
           transactions.push({
@@ -146,10 +151,12 @@ async function main (env = process.env, dependencies = ethers, logger = console)
       const wAddress = (w.address || '').toLowerCase()
       if (wAddress === targetAddress) {
         let amt = w.amount
-        if (typeof amt === 'string' && amt.startsWith('0x')) {
-          amt = BigInt(amt)
-        } else if (typeof amt === 'number') {
-          amt = BigInt(amt)
+        if (typeof amt === 'string' || typeof amt === 'number') {
+          try {
+            amt = BigInt(amt)
+          } catch {
+            // Keep original if parsing fails
+          }
         }
         const ethVal = typeof amt === 'bigint' ? dependencies.formatUnits(amt, 9) : amt
         logger.log(`    MATCH - beacon chain withdrawal to target address: ${ethVal} ETH`)
