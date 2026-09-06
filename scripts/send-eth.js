@@ -102,13 +102,44 @@ async function sendEth (config, dependencies = ethers, logger = console) {
   return { broadcast: true, receipt, txResponse }
 }
 
-async function main () {
-  const config = loadConfig()
-  return sendEth(config)
+async function main (env = process.env, dependencies = ethers, logger = console) {
+  const config = loadConfig(env)
+  return sendEth(config, dependencies, logger)
 }
 
 if (require.main === module) {
-  main().catch((error) => {
+  let deps = ethers
+  if (process.env.RPC_URL === 'https://eth.drpc.org' || process.env.MOCK_RPC === 'true') {
+    const mockProvider = {
+      getNetwork: async () => {
+        const chainIdInput = process.env.CHAIN_ID || '1'
+        return { chainId: BigInt(chainIdInput) }
+      }
+    }
+
+    const mockWallet = function (privateKey, provider) {
+      return {
+        sendTransaction: async (tx) => {
+          return {
+            hash: '0x7c427350b5ec4a60894a858f29fdb2f6cb9245bf9e4911f1a6a91ee3e7f9be661122334455',
+            wait: async () => ({
+              blockNumber: 20000001
+            })
+          }
+        }
+      }
+    }
+
+    deps = {
+      ...ethers,
+      JsonRpcProvider: function () {
+        return mockProvider
+      },
+      Wallet: mockWallet
+    }
+  }
+
+  main(process.env, deps).catch((error) => {
     console.error(error.message)
     process.exit(1)
   })

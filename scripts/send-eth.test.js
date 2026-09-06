@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
 
-const { loadConfig, sendEth } = require('./send-eth')
+const { loadConfig, main, sendEth } = require('./send-eth')
 
 const VALID_ENV = {
   AMOUNT_ETH: '0.01',
@@ -90,3 +90,91 @@ test('fails on a chain mismatch before creating a wallet', async () => {
   )
   assert.equal(walletCreated, false)
 })
+
+test('dry run logs correct information in main', async () => {
+  const logged = []
+  const logger = {
+    log: (...args) => logged.push(args.join(' '))
+  }
+
+  class Provider {
+    async getNetwork () {
+      return { chainId: 1n }
+    }
+  }
+
+  const deps = {
+    JsonRpcProvider: Provider
+  }
+
+  const result = await main(
+    VALID_ENV,
+    deps,
+    logger
+  )
+
+  assert.equal(result.broadcast, false)
+  assert.deepEqual(result.tx, {
+    to: '0x0000000000000000000000000000000000000001',
+    value: 10000000000000000n // 0.01 ETH in Wei
+  })
+  assert.ok(logged.some(line => line.includes('Dry run: 0.01 ETH to 0x0000000000000000000000000000000000000001 on chain 1')))
+})
+
+test('broadcasts transaction with correct parameters in main', async () => {
+  const logged = []
+  const logger = {
+    log: (...args) => logged.push(args.join(' '))
+  }
+
+  let txSent = null
+  let walletCreated = false
+
+  class Provider {
+    async getNetwork () {
+      return { chainId: 1n }
+    }
+  }
+
+  class Wallet {
+    constructor (key, provider) {
+      walletCreated = true
+      assert.equal(key, '0xprivatekey')
+    }
+
+    async sendTransaction (tx) {
+      txSent = tx
+      return {
+        hash: '0xhash',
+        wait: async () => ({ blockNumber: 11 })
+      }
+    }
+  }
+
+  const deps = {
+    JsonRpcProvider: Provider,
+    Wallet
+  }
+
+  const result = await main(
+    {
+      ...VALID_ENV,
+      BROADCAST: 'true',
+      PRIVATE_KEY: '0xprivatekey',
+      CONFIRM_TRANSACTION: 'SEND 0.01 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1'
+    },
+    deps,
+    logger
+  )
+
+  assert.equal(result.broadcast, true)
+  assert.equal(walletCreated, true)
+  assert.deepEqual(txSent, {
+    to: '0x0000000000000000000000000000000000000001',
+    value: 10000000000000000n
+  })
+  assert.equal(result.receipt.blockNumber, 11)
+  assert.ok(logged.some(line => line.includes('Transaction hash: 0xhash')))
+  assert.ok(logged.some(line => line.includes('Transaction confirmed in block 11')))
+})
+
