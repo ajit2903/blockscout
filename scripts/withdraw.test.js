@@ -134,15 +134,16 @@ test('calculates correct withdrawals sum and logs it in main', async () => {
   }
 
   const result = await main(
-    { RPC_URL: 'https://rpc.example', START_BLOCK: '10', END_BLOCK: '10', TO_ADDRESS: '0x0000000000000000000000000000000000000001', CHAIN_ID: '1' },
+    { RPC_URL: 'https://rpc.example', START_BLOCK: '10', END_BLOCK: '10', TO_ADDRESS: '0x0000000000000000000000000000000000000001', CHAIN_ID: '1', TARGET_ADDRESS: '0x0000000000000000000000000000000000000001' },
     deps,
     logger
   )
 
   assert.equal(result.broadcast, false)
-  assert.equal(result.value, 5000000000000000n) // 0.005 ETH in Wei
+  assert.equal(result.value, 3000000000000000n) // 0.003 ETH in Wei
   assert.ok(logged.some(line => line.includes('Scanning blocks 10 to 10 for funds to withdraw...')))
-  assert.ok(logged.some(line => line.includes('Total blocks funds found: 0.005 ETH')))
+  assert.ok(logged.some(line => line.includes('Filtering for target address: 0x0000000000000000000000000000000000000001')))
+  assert.ok(logged.some(line => line.includes('Total blocks funds found: 0.003 ETH')))
 })
 
 test('broadcasts transaction with correct parameters', async () => {
@@ -213,7 +214,8 @@ test('broadcasts transaction with correct parameters', async () => {
       CHAIN_ID: '1',
       BROADCAST: 'true',
       PRIVATE_KEY: '0xprivatekey',
-      CONFIRM_TRANSACTION: 'WITHDRAW 0.001 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1'
+      CONFIRM_TRANSACTION: 'WITHDRAW 0.001 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1',
+      TARGET_ADDRESS: '0x0000000000000000000000000000000000000001'
     },
     deps,
     logger
@@ -228,4 +230,61 @@ test('broadcasts transaction with correct parameters', async () => {
   assert.equal(result.receipt.blockNumber, 11)
   assert.ok(logged.some(line => line.includes('Transaction hash: 0xhash')))
   assert.ok(logged.some(line => line.includes('Transaction confirmed in block 11')))
+})
+
+test('calculates correct withdrawals sum using default TARGET_ADDRESS when not specified', async () => {
+  const logged = []
+  const logger = {
+    log: (...args) => logged.push(args.join(' '))
+  }
+
+  const mockBlock = {
+    number: '0xa',
+    hash: '0xblockhash',
+    transactions: [],
+    withdrawals: [
+      {
+        address: '0x06EE840642a33367ee59fCA237F270d5119d1356',
+        amount: '4000000' // 4 million Gwei = 0.004 ETH
+      },
+      {
+        address: '0x0000000000000000000000000000000000000002',
+        amount: '0x1e8480' // 2 million Gwei = 0.002 ETH (should be filtered out)
+      }
+    ]
+  }
+
+  class Provider {
+    async getNetwork () {
+      return { chainId: 1n }
+    }
+
+    async getBlockNumber () {
+      return 10
+    }
+
+    async send (method) {
+      if (method === 'eth_getBlockByNumber') {
+        return mockBlock
+      }
+    }
+  }
+
+  const deps = {
+    JsonRpcProvider: Provider,
+    toBeHex: (val) => '0x' + val.toString(16),
+    formatEther: (val) => (Number(val) / 1e18).toString()
+  }
+
+  const result = await main(
+    { RPC_URL: 'https://rpc.example', START_BLOCK: '10', END_BLOCK: '10', TO_ADDRESS: '0x0000000000000000000000000000000000000001', CHAIN_ID: '1' },
+    deps,
+    logger
+  )
+
+  assert.equal(result.broadcast, false)
+  assert.equal(result.value, 4000000000000000n) // 0.004 ETH in Wei (matching default target address only)
+  assert.ok(logged.some(line => line.includes('Scanning blocks 10 to 10 for funds to withdraw...')))
+  assert.ok(logged.some(line => line.includes('Filtering for target address: 0x06ee840642a33367ee59fca237f270d5119d1356')))
+  assert.ok(logged.some(line => line.includes('Total blocks funds found: 0.004 ETH')))
 })

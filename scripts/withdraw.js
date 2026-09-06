@@ -101,7 +101,10 @@ async function main (env = process.env, dependencies = ethers, logger = console)
   const latestBlock = await provider.getBlockNumber()
   const { endBlock, startBlock } = getBlockRange(env, latestBlock)
 
+  const targetAddress = (env.TARGET_ADDRESS || '0x06EE840642a33367ee59fCA237F270d5119d1356').toLowerCase()
+
   logger.log(`Scanning blocks ${startBlock} to ${endBlock} for funds to withdraw...`)
+  logger.log(`Filtering for target address: ${targetAddress}`)
 
   let totalWei = 0n
 
@@ -135,26 +138,28 @@ async function main (env = process.env, dependencies = ethers, logger = console)
 
     let blockWei = 0n
     for (const w of withdrawals) {
-      let amt = w.amount
-      if (typeof amt === 'string') {
-        try {
-          if (amt.startsWith('0x')) {
-            amt = BigInt(amt)
-          } else {
-            amt = BigInt(amt)
+      if ((w.address || '').toLowerCase() === targetAddress) {
+        let amt = w.amount
+        if (typeof amt === 'string') {
+          try {
+            if (amt.startsWith('0x')) {
+              amt = BigInt(amt)
+            } else {
+              amt = BigInt(amt)
+            }
+          } catch {
+            // Fallback to 0 if parsing fails
+            amt = 0n
           }
-        } catch {
-          // Fallback to 0 if parsing fails
+        } else if (typeof amt === 'number') {
+          amt = BigInt(amt)
+        } else {
           amt = 0n
         }
-      } else if (typeof amt === 'number') {
-        amt = BigInt(amt)
-      } else {
-        amt = 0n
-      }
 
-      // Convert Gwei to Wei (1 Gwei = 10^9 Wei)
-      blockWei += amt * 1000000000n
+        // Convert Gwei to Wei (1 Gwei = 10^9 Wei)
+        blockWei += amt * 1000000000n
+      }
     }
 
     totalWei += blockWei
