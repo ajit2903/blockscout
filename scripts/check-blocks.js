@@ -166,6 +166,7 @@ async function main (env = process.env, dependencies = ethers, logger = console)
 }
 
 if (require.main === module) {
+  require('./load-env').loadEnv()
   main().catch((error) => {
     console.error(error.message)
     process.exit(1)

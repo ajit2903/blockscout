@@ -1,5 +1,7 @@
 'use strict';
 
+require('./scripts/load-env').loadEnv();
+
 const fs = require('node:fs/promises');
 const http = require('node:http');
 const path = require('node:path');
