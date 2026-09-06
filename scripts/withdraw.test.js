@@ -288,3 +288,25 @@ test('calculates correct withdrawals sum using default TARGET_ADDRESS when not s
   assert.ok(logged.some(line => line.includes('Filtering for target address: 0x06ee840642a33367ee59fca237f270d5119d1356')))
   assert.ok(logged.some(line => line.includes('Total blocks funds found: 0.004 ETH')))
 })
+
+test('merges custom transaction options from TX_OPTIONS and individual environment variables', () => {
+  const config = loadConfig({
+    ...VALID_ENV,
+    TX_OPTIONS: '{"gasLimit":"21000","nonce":"42"}',
+    GAS_PRICE: '1000000000',
+    DATA: '0x1234'
+  }, 1000000000n)
+
+  assert.equal(config.txOptions.gasLimit, 21000n)
+  assert.equal(config.txOptions.nonce, 42)
+  assert.equal(config.txOptions.gasPrice, 1000000000n)
+  assert.equal(config.txOptions.data, '0x1234')
+})
+
+test('throws on invalid TX_OPTIONS JSON string', () => {
+  assert.throws(() => loadConfig({
+    ...VALID_ENV,
+    TX_OPTIONS: 'not-valid-json'
+  }, 1000000000n), /TX_OPTIONS must be a valid JSON string/)
+})
+

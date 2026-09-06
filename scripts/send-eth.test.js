@@ -178,3 +178,25 @@ test('broadcasts transaction with correct parameters in main', async () => {
   assert.ok(logged.some(line => line.includes('Transaction confirmed in block 11')))
 })
 
+test('merges custom transaction options from TX_OPTIONS and individual environment variables', () => {
+  const config = loadConfig({
+    ...VALID_ENV,
+    TX_OPTIONS: '{"gasLimit":"21000","nonce":"42"}',
+    GAS_PRICE: '1000000000',
+    DATA: '0x1234'
+  })
+
+  assert.equal(config.txOptions.gasLimit, 21000n)
+  assert.equal(config.txOptions.nonce, 42)
+  assert.equal(config.txOptions.gasPrice, 1000000000n)
+  assert.equal(config.txOptions.data, '0x1234')
+})
+
+test('throws on invalid TX_OPTIONS JSON string', () => {
+  assert.throws(() => loadConfig({
+    ...VALID_ENV,
+    TX_OPTIONS: 'not-valid-json'
+  }), /TX_OPTIONS must be a valid JSON string/)
+})
+
+

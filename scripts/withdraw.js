@@ -47,6 +47,41 @@ function loadConfig (env = process.env, totalWei) {
     }
   }
 
+  let txOptions = {}
+  if (env.TX_OPTIONS) {
+    try {
+      txOptions = JSON.parse(env.TX_OPTIONS)
+    } catch {
+      throw new Error('TX_OPTIONS must be a valid JSON string')
+    }
+  }
+
+  const parseBigInt = (val) => {
+    if (val === undefined || val === null || val === '') return undefined
+    try { return BigInt(val) } catch { return val }
+  }
+
+  const parseNumber = (val) => {
+    if (val === undefined || val === null || val === '') return undefined
+    const num = Number(val)
+    return Number.isNaN(num) ? val : num
+  }
+
+  if (txOptions.gasLimit !== undefined) txOptions.gasLimit = parseBigInt(txOptions.gasLimit)
+  if (txOptions.gasPrice !== undefined) txOptions.gasPrice = parseBigInt(txOptions.gasPrice)
+  if (txOptions.maxFeePerGas !== undefined) txOptions.maxFeePerGas = parseBigInt(txOptions.maxFeePerGas)
+  if (txOptions.maxPriorityFeePerGas !== undefined) txOptions.maxPriorityFeePerGas = parseBigInt(txOptions.maxPriorityFeePerGas)
+  if (txOptions.nonce !== undefined) txOptions.nonce = parseNumber(txOptions.nonce)
+  if (txOptions.type !== undefined) txOptions.type = parseNumber(txOptions.type)
+
+  if (env.GAS_LIMIT) txOptions.gasLimit = parseBigInt(env.GAS_LIMIT)
+  if (env.GAS_PRICE) txOptions.gasPrice = parseBigInt(env.GAS_PRICE)
+  if (env.MAX_FEE_PER_GAS) txOptions.maxFeePerGas = parseBigInt(env.MAX_FEE_PER_GAS)
+  if (env.MAX_PRIORITY_FEE_PER_GAS) txOptions.maxPriorityFeePerGas = parseBigInt(env.MAX_PRIORITY_FEE_PER_GAS)
+  if (env.NONCE) txOptions.nonce = parseNumber(env.NONCE)
+  if (env.DATA) txOptions.data = env.DATA
+  if (env.TX_TYPE) txOptions.type = parseNumber(env.TX_TYPE)
+
   return {
     amountEth,
     broadcast,
@@ -55,7 +90,8 @@ function loadConfig (env = process.env, totalWei) {
     privateKey,
     rpcUrl,
     toAddress: normalizedToAddress,
-    value: totalWei
+    value: totalWei,
+    txOptions
   }
 }
 
@@ -71,7 +107,8 @@ async function withdraw (config, dependencies = ethers, logger = console) {
 
   const tx = {
     to: config.toAddress,
-    value: config.value
+    value: config.value,
+    ...config.txOptions
   }
 
   if (!config.broadcast) {
