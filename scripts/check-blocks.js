@@ -49,20 +49,111 @@ async function main (env = process.env, dependencies = ethers, logger = console)
   const latestBlock = await provider.getBlockNumber()
   const { endBlock, startBlock } = getBlockRange(env, latestBlock)
 
+  const targetAddress = (env.TARGET_ADDRESS || '0x06EE840642a33367ee59fCA237F270d5119d1356').toLowerCase()
+
   logger.log(`Checking blocks ${startBlock} to ${endBlock} (latest: ${latestBlock})`)
+  logger.log(`Filtering for target address: ${targetAddress}`)
 
   for (let blockNumber = startBlock; blockNumber <= endBlock; blockNumber++) {
-    const block = await provider.getBlock(blockNumber)
+    let block
+    try {
+      block = await provider.send('eth_getBlockByNumber', [dependencies.toBeHex(blockNumber), true])
+    } catch {
+      try {
+        block = await provider.getBlock(blockNumber, true)
+      } catch (err) {
+        logger.log(`Block ${blockNumber}: failed to fetch (${err.message})`)
+        continue
+      }
+    }
 
     if (!block) {
       logger.log(`Block ${blockNumber}: not found`)
       continue
     }
 
-    logger.log(`Block ${block.number} (${block.hash}) - ${block.transactions.length} transaction(s)`)
+    let number = blockNumber
+    let hash = ''
+    const transactions = []
+    const withdrawals = []
 
-    for (const txHash of block.transactions) {
-      logger.log(`  tx: ${txHash}`)
+    if (typeof block.number === 'number') {
+      // Ethers Block class
+      number = block.number
+      hash = block.hash
+      const prefetched = block.prefetchedTransactions || block.transactions || []
+      for (const tx of prefetched) {
+        if (tx && typeof tx === 'object') {
+          transactions.push({
+            hash: tx.hash,
+            from: tx.from,
+            to: tx.to,
+            value: tx.value
+          })
+        } else {
+          transactions.push({ hash: tx })
+        }
+      }
+    } else {
+      // Raw JSON-RPC response object
+      number = typeof block.number === 'string' && block.number.startsWith('0x')
+        ? parseInt(block.number, 16)
+        : Number(block.number || blockNumber)
+      hash = block.hash
+      if (Array.isArray(block.transactions)) {
+        for (const tx of block.transactions) {
+          if (tx && typeof tx === 'object') {
+            transactions.push({
+              hash: tx.hash,
+              from: tx.from,
+              to: tx.to,
+              value: tx.value
+            })
+          } else {
+            transactions.push({ hash: tx })
+          }
+        }
+      }
+      if (Array.isArray(block.withdrawals)) {
+        for (const w of block.withdrawals) {
+          withdrawals.push({
+            address: w.address,
+            amount: w.amount
+          })
+        }
+      }
+    }
+
+    logger.log(`Block ${number} (${hash}) - ${transactions.length} transaction(s)`)
+
+    for (const tx of transactions) {
+      logger.log(`  tx: ${tx.hash}`)
+
+      const from = (tx.from || '').toLowerCase()
+      const to = (tx.to || '').toLowerCase()
+
+      if (from === targetAddress) {
+        const val = tx.value ? dependencies.formatEther(tx.value) : '0'
+        logger.log(`    MATCH - withdrawal from target address: ${val} ETH to ${tx.to}`)
+      }
+      if (to === targetAddress) {
+        const val = tx.value ? dependencies.formatEther(tx.value) : '0'
+        logger.log(`    MATCH - deposit to target address: ${val} ETH from ${tx.from}`)
+      }
+    }
+
+    for (const w of withdrawals) {
+      const wAddress = (w.address || '').toLowerCase()
+      if (wAddress === targetAddress) {
+        let amt = w.amount
+        if (typeof amt === 'string' && amt.startsWith('0x')) {
+          amt = BigInt(amt)
+        } else if (typeof amt === 'number') {
+          amt = BigInt(amt)
+        }
+        const ethVal = typeof amt === 'bigint' ? dependencies.formatUnits(amt, 9) : amt
+        logger.log(`    MATCH - beacon chain withdrawal to target address: ${ethVal} ETH`)
+      }
     }
   }
 }
