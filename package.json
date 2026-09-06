@@ -9,6 +9,7 @@
     "check-blocks": "node scripts/check-blocks.js",
     "withdraw": "node scripts/withdraw.js",
     "send-eth": "node scripts/send-eth.js",
+    "check-balance": "node scripts/check-balance.js",
     "test": "node --test scripts/*.test.js"
   },
   "engines": {
