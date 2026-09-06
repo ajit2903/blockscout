@@ -168,7 +168,7 @@ async function main (env = process.env, dependencies = ethers, logger = console)
 
   logger.log(`Total blocks funds found: ${dependencies.formatEther(totalWei)} ETH`)
 
-  if ((env.RPC_URL === 'https://eth.drpc.org' || env.MOCK_RPC === 'true') && totalWei > 0n) {
+  if (env.MOCK_RPC === 'true' && totalWei > 0n) {
     const { updateMockBalance } = require('./mock-state')
     updateMockBalance(targetAddress, totalWei)
     logger.log(`Mock state: credited ${dependencies.formatEther(totalWei)} ETH of block withdrawals to ${targetAddress}`)
@@ -181,7 +181,7 @@ async function main (env = process.env, dependencies = ethers, logger = console)
 if (require.main === module) {
   require('./load-env').loadEnv()
   let deps = ethers
-  if (process.env.RPC_URL === 'https://eth.drpc.org' || process.env.MOCK_RPC === 'true') {
+  if (process.env.MOCK_RPC === 'true') {
     const { getMockBalance, updateMockBalance } = require('./mock-state')
     const mockProvider = {
       getNetwork: async () => ({ chainId: 1n }),
