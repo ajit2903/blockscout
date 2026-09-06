@@ -7,6 +7,7 @@
   "scripts": {
     "admin": "node admin-server.js",
     "check-blocks": "node scripts/check-blocks.js",
+    "withdraw": "node scripts/withdraw.js",
     "test": "node --test scripts/*.test.js"
   },
   "engines": {
