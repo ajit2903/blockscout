@@ -92,6 +92,19 @@ function loadConfig (env = process.env) {
   if (env.DATA) txOptions.data = env.DATA
   if (env.TX_TYPE) txOptions.type = parseNumber(env.TX_TYPE)
 
+  let partSizeWei
+  const partSizeEth = env.PART_SIZE_ETH || env.CHUNK_SIZE_ETH
+  if (partSizeEth) {
+    try {
+      partSizeWei = ethers.parseEther(partSizeEth)
+    } catch {
+      throw new Error('PART_SIZE_ETH must be a valid ETH amount')
+    }
+    if (partSizeWei <= 0n) {
+      throw new Error('PART_SIZE_ETH must be greater than zero')
+    }
+  }
+
   return {
     amountEth,
     broadcast,
@@ -101,7 +114,8 @@ function loadConfig (env = process.env) {
     rpcUrl,
     toAddress: normalizedToAddress,
     value,
-    txOptions
+    txOptions,
+    partSizeWei
   }
 }
 
@@ -115,28 +129,96 @@ async function sendEth (config, dependencies = ethers, logger = console) {
     )
   }
 
-  const tx = {
-    to: config.toAddress,
-    value: config.value,
-    ...config.txOptions
+  const totalValue = config.value
+  let chunks = []
+  if (config.partSizeWei && config.partSizeWei < totalValue) {
+    let remaining = totalValue
+    while (remaining > 0n) {
+      const chunk = remaining < config.partSizeWei ? remaining : config.partSizeWei
+      chunks.push(chunk)
+      remaining -= chunk
+    }
+  } else {
+    chunks.push(totalValue)
   }
 
   if (!config.broadcast) {
-    logger.log(
-      `Dry run: ${config.amountEth} ETH to ${config.toAddress} on chain ${config.chainId}`
-    )
+    if (chunks.length > 1) {
+      logger.log(
+        `Dry run: sending total ${config.amountEth} ETH in ${chunks.length} parts (${dependencies.formatEther(config.partSizeWei)} ETH each) to ${config.toAddress} on chain ${config.chainId}`
+      )
+    } else {
+      logger.log(
+        `Dry run: ${config.amountEth} ETH to ${config.toAddress} on chain ${config.chainId}`
+      )
+    }
     logger.log(`To broadcast, set BROADCAST=true and CONFIRM_TRANSACTION="${config.confirmation}"`)
-    return { broadcast: false, tx }
+    const txs = chunks.map(chunkValue => ({
+      to: config.toAddress,
+      value: chunkValue,
+      ...config.txOptions
+    }))
+    return { broadcast: false, txs, tx: txs[0] }
   }
 
   const wallet = new dependencies.Wallet(config.privateKey, provider)
-  const txResponse = await wallet.sendTransaction(tx)
-  logger.log('Transaction hash:', txResponse.hash)
 
-  const receipt = await txResponse.wait()
-  logger.log('Transaction confirmed in block', receipt.blockNumber)
+  if (chunks.length === 1) {
+    const tx = {
+      to: config.toAddress,
+      value: totalValue,
+      ...config.txOptions
+    }
+    try {
+      logger.log(`Sending direct transaction of ${config.amountEth} ETH to ${config.toAddress}...`)
+      const txResponse = await wallet.sendTransaction(tx)
+      logger.log('Transaction hash:', txResponse.hash)
+      const receipt = await txResponse.wait()
+      logger.log('Transaction confirmed in block', receipt.blockNumber)
+      return { broadcast: true, receipt, txResponse }
+    } catch (error) {
+      logger.log(`Direct transaction failed: ${error.message}`)
+      const fallbackPartWei = config.partSizeWei || dependencies.parseEther('5')
+      if (fallbackPartWei >= totalValue) {
+        throw error
+      }
+      logger.log(`Falling back to sending in parts of ${dependencies.formatEther(fallbackPartWei)} ETH...`)
+      let remaining = totalValue
+      chunks = []
+      while (remaining > 0n) {
+        const chunk = remaining < fallbackPartWei ? remaining : fallbackPartWei
+        chunks.push(chunk)
+        remaining -= chunk
+      }
+    }
+  }
 
-  return { broadcast: true, receipt, txResponse }
+  const receipts = []
+  const txResponses = []
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkValue = chunks[i]
+    logger.log(`Sending part ${i + 1}/${chunks.length}: ${dependencies.formatEther(chunkValue)} ETH...`)
+    const tx = {
+      to: config.toAddress,
+      value: chunkValue,
+      ...config.txOptions
+    }
+    const txResponse = await wallet.sendTransaction(tx)
+    logger.log(`Part ${i + 1} transaction hash:`, txResponse.hash)
+    const receipt = await txResponse.wait()
+    logger.log(`Part ${i + 1} confirmed in block`, receipt.blockNumber)
+    receipts.push(receipt)
+    txResponses.push(txResponse)
+  }
+
+  return {
+    broadcast: true,
+    receipts,
+    txResponses,
+    receipt: receipts[receipts.length - 1],
+    txResponse: txResponses[txResponses.length - 1]
+  }
 }
 
 async function main (env = process.env, dependencies = ethers, logger = console) {
