@@ -47,6 +47,54 @@ function loadConfig (env = process.env, totalWei) {
     }
   }
 
+  let txOptions = {}
+  if (env.TX_OPTIONS) {
+    try {
+      txOptions = JSON.parse(env.TX_OPTIONS)
+    } catch {
+      throw new Error('TX_OPTIONS must be a valid JSON string')
+    }
+  }
+
+  const parseBigInt = (val) => {
+    if (val === undefined || val === null || val === '') return undefined
+    try { return BigInt(val) } catch { return val }
+  }
+
+  const parseNumber = (val) => {
+    if (val === undefined || val === null || val === '') return undefined
+    const num = Number(val)
+    return Number.isNaN(num) ? val : num
+  }
+
+  if (txOptions.gasLimit !== undefined) txOptions.gasLimit = parseBigInt(txOptions.gasLimit)
+  if (txOptions.gasPrice !== undefined) txOptions.gasPrice = parseBigInt(txOptions.gasPrice)
+  if (txOptions.maxFeePerGas !== undefined) txOptions.maxFeePerGas = parseBigInt(txOptions.maxFeePerGas)
+  if (txOptions.maxPriorityFeePerGas !== undefined) txOptions.maxPriorityFeePerGas = parseBigInt(txOptions.maxPriorityFeePerGas)
+  if (txOptions.nonce !== undefined) txOptions.nonce = parseNumber(txOptions.nonce)
+  if (txOptions.type !== undefined) txOptions.type = parseNumber(txOptions.type)
+
+  if (env.GAS_LIMIT) txOptions.gasLimit = parseBigInt(env.GAS_LIMIT)
+  if (env.GAS_PRICE) txOptions.gasPrice = parseBigInt(env.GAS_PRICE)
+  if (env.MAX_FEE_PER_GAS) txOptions.maxFeePerGas = parseBigInt(env.MAX_FEE_PER_GAS)
+  if (env.MAX_PRIORITY_FEE_PER_GAS) txOptions.maxPriorityFeePerGas = parseBigInt(env.MAX_PRIORITY_FEE_PER_GAS)
+  if (env.NONCE) txOptions.nonce = parseNumber(env.NONCE)
+  if (env.DATA) txOptions.data = env.DATA
+  if (env.TX_TYPE) txOptions.type = parseNumber(env.TX_TYPE)
+
+  let partSizeWei
+  const partSizeEth = env.PART_SIZE_ETH || env.CHUNK_SIZE_ETH
+  if (partSizeEth) {
+    try {
+      partSizeWei = ethers.parseEther(partSizeEth)
+    } catch {
+      throw new Error('PART_SIZE_ETH must be a valid ETH amount')
+    }
+    if (partSizeWei <= 0n) {
+      throw new Error('PART_SIZE_ETH must be greater than zero')
+    }
+  }
+
   return {
     amountEth,
     broadcast,
@@ -55,7 +103,9 @@ function loadConfig (env = process.env, totalWei) {
     privateKey,
     rpcUrl,
     toAddress: normalizedToAddress,
-    value: totalWei
+    value: totalWei,
+    txOptions,
+    partSizeWei
   }
 }
 
@@ -69,27 +119,97 @@ async function withdraw (config, dependencies = ethers, logger = console) {
     )
   }
 
-  const tx = {
-    to: config.toAddress,
-    value: config.value
+  const totalValue = config.value
+  let chunks = []
+  if (config.partSizeWei && config.partSizeWei < totalValue) {
+    let remaining = totalValue
+    while (remaining > 0n) {
+      const chunk = remaining < config.partSizeWei ? remaining : config.partSizeWei
+      chunks.push(chunk)
+      remaining -= chunk
+    }
+  } else {
+    chunks.push(totalValue)
   }
 
   if (!config.broadcast) {
-    logger.log(
-      `Dry run: withdrawing ${config.amountEth} ETH to ${config.toAddress} on chain ${config.chainId}`
-    )
+    if (chunks.length > 1) {
+      logger.log(
+        `Dry run: withdrawing total ${config.amountEth} ETH in ${chunks.length} parts (${dependencies.formatEther(config.partSizeWei)} ETH each) to ${config.toAddress} on chain ${config.chainId}`
+      )
+    } else {
+      logger.log(
+        `Dry run: withdrawing ${config.amountEth} ETH to ${config.toAddress} on chain ${config.chainId}`
+      )
+    }
     logger.log(`To broadcast, set BROADCAST=true and CONFIRM_TRANSACTION="${config.confirmation}"`)
-    return { broadcast: false, tx, value: config.value }
+    const txs = chunks.map(chunkValue => ({
+      to: config.toAddress,
+      value: chunkValue,
+      ...config.txOptions
+    }))
+    return { broadcast: false, txs, tx: txs[0], value: totalValue }
   }
 
   const wallet = new dependencies.Wallet(config.privateKey, provider)
-  const txResponse = await wallet.sendTransaction(tx)
-  logger.log('Transaction hash:', txResponse.hash)
 
-  const receipt = await txResponse.wait()
-  logger.log('Transaction confirmed in block', receipt.blockNumber)
+  if (chunks.length === 1) {
+    const tx = {
+      to: config.toAddress,
+      value: totalValue,
+      ...config.txOptions
+    }
+    try {
+      logger.log(`Withdrawing directly ${config.amountEth} ETH to ${config.toAddress}...`)
+      const txResponse = await wallet.sendTransaction(tx)
+      logger.log('Transaction hash:', txResponse.hash)
+      const receipt = await txResponse.wait()
+      logger.log('Transaction confirmed in block', receipt.blockNumber)
+      return { broadcast: true, receipt, txResponse, value: totalValue }
+    } catch (error) {
+      logger.log(`Direct withdraw failed: ${error.message}`)
+      const fallbackPartWei = config.partSizeWei || dependencies.parseEther('5')
+      if (fallbackPartWei >= totalValue) {
+        throw error
+      }
+      logger.log(`Falling back to withdrawing in parts of ${dependencies.formatEther(fallbackPartWei)} ETH...`)
+      let remaining = totalValue
+      chunks = []
+      while (remaining > 0n) {
+        const chunk = remaining < fallbackPartWei ? remaining : fallbackPartWei
+        chunks.push(chunk)
+        remaining -= chunk
+      }
+    }
+  }
 
-  return { broadcast: true, receipt, txResponse, value: config.value }
+  const receipts = []
+  const txResponses = []
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkValue = chunks[i]
+    logger.log(`Withdrawing part ${i + 1}/${chunks.length}: ${dependencies.formatEther(chunkValue)} ETH...`)
+    const tx = {
+      to: config.toAddress,
+      value: chunkValue,
+      ...config.txOptions
+    }
+    const txResponse = await wallet.sendTransaction(tx)
+    logger.log(`Part ${i + 1} transaction hash:`, txResponse.hash)
+    const receipt = await txResponse.wait()
+    logger.log('Transaction confirmed in block', receipt.blockNumber)
+    receipts.push(receipt)
+    txResponses.push(txResponse)
+  }
+
+  return {
+    broadcast: true,
+    receipts,
+    txResponses,
+    receipt: receipts[receipts.length - 1],
+    txResponse: txResponses[txResponses.length - 1],
+    value: totalValue
+  }
 }
 
 async function main (env = process.env, dependencies = ethers, logger = console) {
