@@ -68,6 +68,7 @@ dump.rdb
 
 .env
 .env.local
+.mock-balance-state.json
 *.env.staging
 !/.env.example
 .devcontainer/.blockscout_config*

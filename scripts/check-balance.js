@@ -51,11 +51,11 @@ if (require.main === module) {
   require('./load-env').loadEnv()
   let deps = ethers
   if (process.env.RPC_URL === 'https://eth.drpc.org' || process.env.MOCK_RPC === 'true') {
+    const { getMockBalance } = require('./mock-state')
     const mockProvider = {
       getNetwork: async () => ({ chainId: 1n }),
       getBalance: async (address) => {
-        // Return 64 ETH as mock balance
-        return 64000000000000000000n
+        return getMockBalance(address)
       }
     }
 

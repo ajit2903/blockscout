@@ -111,16 +111,26 @@ if (require.main === module) {
   require('./load-env').loadEnv()
   let deps = ethers
   if (process.env.RPC_URL === 'https://eth.drpc.org' || process.env.MOCK_RPC === 'true') {
+    const { getMockBalance, updateMockBalance } = require('./mock-state')
     const mockProvider = {
       getNetwork: async () => {
         const chainIdInput = process.env.CHAIN_ID || '1'
         return { chainId: BigInt(chainIdInput) }
+      },
+      getBalance: async (address) => {
+        return getMockBalance(address)
       }
     }
 
     const mockWallet = function (privateKey, provider) {
       return {
         sendTransaction: async (tx) => {
+          const sender = process.env.TARGET_ADDRESS || '0x06EE840642a33367ee59fCA237F270d5119d1356'
+          const value = BigInt(tx.value || 0n)
+          updateMockBalance(sender, -value)
+          if (tx.to) {
+            updateMockBalance(tx.to, value)
+          }
           return {
             hash: '0x7c427350b5ec4a60894a858f29fdb2f6cb9245bf9e4911f1a6a91ee3e7f9be661122334455',
             wait: async () => ({
