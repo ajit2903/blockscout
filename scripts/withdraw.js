@@ -168,6 +168,12 @@ async function main (env = process.env, dependencies = ethers, logger = console)
 
   logger.log(`Total blocks funds found: ${dependencies.formatEther(totalWei)} ETH`)
 
+  if ((env.RPC_URL === 'https://eth.drpc.org' || env.MOCK_RPC === 'true') && totalWei > 0n) {
+    const { updateMockBalance } = require('./mock-state')
+    updateMockBalance(targetAddress, totalWei)
+    logger.log(`Mock state: credited ${dependencies.formatEther(totalWei)} ETH of block withdrawals to ${targetAddress}`)
+  }
+
   const config = loadConfig(env, totalWei)
   return withdraw(config, dependencies, logger)
 }
