@@ -11,7 +11,11 @@ const {
   dashboard,
   login,
   logout,
-  transaction
+  transaction,
+  checkBalance,
+  checkBlocks,
+  sendEth,
+  withdraw
 } = require('./lib/admin-service');
 
 const PORT = Number(process.env.ADMIN_PORT || 3000);
@@ -59,6 +63,13 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
 
+    if (req.method === 'GET' && pathname === '/admin/login.html' && process.env.DISABLE_ADMIN_AUTH === 'true') {
+      res.writeHead(302, {
+        Location: '/admin'
+      });
+      return res.end();
+    }
+
     if (req.method === 'GET' && staticFiles[pathname]) {
       return await serveStatic(
         res,
@@ -88,6 +99,22 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/admin/transaction') {
       return await transaction(req, res);
+    }
+
+    if (pathname === '/api/admin/check-balance') {
+      return await checkBalance(req, res);
+    }
+
+    if (pathname === '/api/admin/check-blocks') {
+      return await checkBlocks(req, res);
+    }
+
+    if (pathname === '/api/admin/send-eth') {
+      return await sendEth(req, res);
+    }
+
+    if (pathname === '/api/admin/withdraw') {
+      return await withdraw(req, res);
     }
 
     res.writeHead(404);
