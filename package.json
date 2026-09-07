@@ -2,7 +2,7 @@
   "name": "eth-block-admin",
   "version": "1.0.0",
   "private": true,
-  "description": "Authenticated read-only Ethereum block administration panel",
+  "description": "Authenticated full Ethereum block administration panel",
   "main": "admin-server.js",
   "scripts": {
     "admin": "node admin-server.js",
