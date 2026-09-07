@@ -142,6 +142,139 @@ document
     }
   });
 
+document
+  .querySelector('#checkBalanceForm')
+  .addEventListener('submit', async event => {
+    event.preventDefault();
+    const result = document.querySelector('#balanceResult');
+    result.textContent = 'Checking balance...';
+
+    try {
+      const response = await request(`${api}/check-balance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          targetAddress: document.querySelector('#balanceAddress').value.trim() || undefined,
+          mockRpc: document.querySelector('#balanceMockRpc').value
+        })
+      });
+
+      result.textContent = `Result:\n${JSON.stringify(response.result, null, 2)}\n\nLogs:\n${response.logs.join('\n')}`;
+    } catch (error) {
+      if (error.message === 'Authentication required') {
+        window.location.replace('/admin/login.html');
+        return;
+      }
+      result.textContent = error.message;
+    }
+  });
+
+document
+  .querySelector('#checkBlocksForm')
+  .addEventListener('submit', async event => {
+    event.preventDefault();
+    const result = document.querySelector('#blocksResult');
+    result.textContent = 'Scanning blocks...';
+
+    try {
+      const response = await request(`${api}/check-blocks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          targetAddress: document.querySelector('#blocksAddress').value.trim() || undefined,
+          startBlock: document.querySelector('#blocksStart').value || undefined,
+          endBlock: document.querySelector('#blocksEnd').value || undefined,
+          blockCount: document.querySelector('#blocksCount').value || undefined,
+          mockRpc: document.querySelector('#blocksMockRpc').value
+        })
+      });
+
+      result.textContent = `Result:\n${JSON.stringify(response.result, null, 2)}\n\nLogs:\n${response.logs.join('\n')}`;
+    } catch (error) {
+      if (error.message === 'Authentication required') {
+        window.location.replace('/admin/login.html');
+        return;
+      }
+      result.textContent = error.message;
+    }
+  });
+
+document
+  .querySelector('#sendEthForm')
+  .addEventListener('submit', async event => {
+    event.preventDefault();
+    const result = document.querySelector('#sendEthResult');
+    result.textContent = 'Sending ETH...';
+
+    try {
+      const response = await request(`${api}/send-eth`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          toAddress: document.querySelector('#sendTo').value.trim(),
+          amountEth: document.querySelector('#sendAmount').value.trim(),
+          chainId: document.querySelector('#sendChainId').value,
+          privateKey: document.querySelector('#sendPrivateKey').value.trim() || undefined,
+          confirmTransaction: document.querySelector('#sendConfirm').value.trim() || undefined,
+          partSizeEth: document.querySelector('#sendPartSize').value.trim() || undefined,
+          mockRpc: document.querySelector('#sendMockRpc').value,
+          broadcast: document.querySelector('#sendBroadcast').value === 'true'
+        })
+      });
+
+      result.textContent = `Result:\n${JSON.stringify(response.result, null, 2)}\n\nLogs:\n${response.logs.join('\n')}`;
+    } catch (error) {
+      if (error.message === 'Authentication required') {
+        window.location.replace('/admin/login.html');
+        return;
+      }
+      result.textContent = error.message;
+    }
+  });
+
+document
+  .querySelector('#withdrawForm')
+  .addEventListener('submit', async event => {
+    event.preventDefault();
+    const result = document.querySelector('#withdrawResult');
+    result.textContent = 'Withdrawing funds...';
+
+    try {
+      const response = await request(`${api}/withdraw`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          toAddress: document.querySelector('#withdrawTo').value.trim(),
+          chainId: document.querySelector('#withdrawChainId').value,
+          startBlock: document.querySelector('#withdrawStart').value || undefined,
+          endBlock: document.querySelector('#withdrawEnd').value || undefined,
+          blockCount: document.querySelector('#withdrawCount').value || undefined,
+          privateKey: document.querySelector('#withdrawPrivateKey').value.trim() || undefined,
+          confirmTransaction: document.querySelector('#withdrawConfirm').value.trim() || undefined,
+          partSizeEth: document.querySelector('#withdrawPartSize').value.trim() || undefined,
+          mockRpc: document.querySelector('#withdrawMockRpc').value,
+          broadcast: document.querySelector('#withdrawBroadcast').value === 'true'
+        })
+      });
+
+      result.textContent = `Result:\n${JSON.stringify(response.result, null, 2)}\n\nLogs:\n${response.logs.join('\n')}`;
+    } catch (error) {
+      if (error.message === 'Authentication required') {
+        window.location.replace('/admin/login.html');
+        return;
+      }
+      result.textContent = error.message;
+    }
+  });
+
 const authError = new URLSearchParams(
   window.location.search
 ).get('auth');
