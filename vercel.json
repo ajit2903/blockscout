@@ -1,0 +1,3 @@
+{
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- ./api ./admin ./lib ./scripts ./package.json ./package-lock.json ./admin-server.js"
+}

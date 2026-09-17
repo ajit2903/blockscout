@@ -342,6 +342,89 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
     assert.deepEqual(await response.json(), { number: '0x0' });
   });
 
+  await t.test('handles check-balance through the API route', async () => {
+    const response = await adminRequest('/api/admin/check-balance', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({
+        mockRpc: 'true'
+      })
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.ok(body.result);
+    assert.ok(Array.isArray(body.logs));
+  });
+
+  await t.test('handles check-blocks through the API route', async () => {
+    const response = await adminRequest('/api/admin/check-blocks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({
+        mockRpc: 'true',
+        startBlock: 20000000,
+        endBlock: 20000000
+      })
+    });
+
+    if (response.status !== 200) {
+      console.log('check-blocks fail body:', await response.json());
+    }
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.ok(Array.isArray(body.logs));
+  });
+
+  await t.test('handles send-eth through the API route', async () => {
+    const response = await adminRequest('/api/admin/send-eth', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({
+        mockRpc: 'true',
+        toAddress: '0x06ee840642a33367ee59fca237f270d5119d1356',
+        amountEth: '1',
+        chainId: 1
+      })
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.ok(body.result);
+    assert.ok(Array.isArray(body.logs));
+  });
+
+  await t.test('handles withdraw through the API route', async () => {
+    const response = await adminRequest('/api/admin/withdraw', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({
+        mockRpc: 'true',
+        toAddress: '0x06ee840642a33367ee59fca237f270d5119d1356',
+        chainId: 1,
+        startBlock: 20000000,
+        endBlock: 20000000
+      })
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.ok(body.result);
+    assert.ok(Array.isArray(body.logs));
+  });
+
   await t.test('rejects a tampered signature', async () => {
     const token = decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1));
     const replacement = token.endsWith('0') ? '1' : '0';

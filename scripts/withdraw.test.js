@@ -288,3 +288,185 @@ test('calculates correct withdrawals sum using default TARGET_ADDRESS when not s
   assert.ok(logged.some(line => line.includes('Filtering for target address: 0x06ee840642a33367ee59fca237f270d5119d1356')))
   assert.ok(logged.some(line => line.includes('Total blocks funds found: 0.004 ETH')))
 })
+
+test('merges custom transaction options from TX_OPTIONS and individual environment variables', () => {
+  const config = loadConfig({
+    ...VALID_ENV,
+    TX_OPTIONS: '{"gasLimit":"21000","nonce":"42"}',
+    GAS_PRICE: '1000000000',
+    DATA: '0x1234'
+  }, 1000000000n)
+
+  assert.equal(config.txOptions.gasLimit, 21000n)
+  assert.equal(config.txOptions.nonce, 42)
+  assert.equal(config.txOptions.gasPrice, 1000000000n)
+  assert.equal(config.txOptions.data, '0x1234')
+})
+
+test('throws on invalid TX_OPTIONS JSON string', () => {
+  assert.throws(() => loadConfig({
+    ...VALID_ENV,
+    TX_OPTIONS: 'not-valid-json'
+  }, 1000000000n), /TX_OPTIONS must be a valid JSON string/)
+})
+
+test('withdraws in sequential parts when PART_SIZE_ETH is specified', async () => {
+  const logged = []
+  const logger = {
+    log: (...args) => logged.push(args.join(' '))
+  }
+
+  const txsSent = []
+  const mockBlock = {
+    number: '0xa',
+    hash: '0xblockhash',
+    transactions: [],
+    withdrawals: [
+      {
+        address: '0x0000000000000000000000000000000000000001',
+        amount: '12000000000' // 12 billion Gwei = 12 ETH
+      }
+    ]
+  }
+
+  class Provider {
+    async getNetwork () {
+      return { chainId: 1n }
+    }
+
+    async getBlockNumber () {
+      return 10
+    }
+
+    async send (method) {
+      if (method === 'eth_getBlockByNumber') {
+        return mockBlock
+      }
+    }
+  }
+
+  class Wallet {
+    async sendTransaction (tx) {
+      txsSent.push(tx)
+      return {
+        hash: `0xhash${txsSent.length}`,
+        wait: async () => ({ blockNumber: 11 })
+      }
+    }
+  }
+
+  const deps = {
+    JsonRpcProvider: Provider,
+    Wallet,
+    toBeHex: (val) => '0x' + val.toString(16),
+    formatEther: (val) => (Number(val) / 1e18).toString(),
+    parseEther: (val) => BigInt(Number(val) * 1e18)
+  }
+
+  const result = await main(
+    {
+      ...VALID_ENV,
+      START_BLOCK: '10',
+      END_BLOCK: '10',
+      PART_SIZE_ETH: '5',
+      BROADCAST: 'true',
+      PRIVATE_KEY: '0xprivatekey',
+      CONFIRM_TRANSACTION: 'WITHDRAW 12.0 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1',
+      TARGET_ADDRESS: '0x0000000000000000000000000000000000000001'
+    },
+    deps,
+    logger
+  )
+
+  assert.equal(result.broadcast, true)
+  assert.equal(txsSent.length, 3)
+  assert.deepEqual(txsSent[0], { to: '0x0000000000000000000000000000000000000001', value: 5000000000000000000n })
+  assert.deepEqual(txsSent[1], { to: '0x0000000000000000000000000000000000000001', value: 5000000000000000000n })
+  assert.deepEqual(txsSent[2], { to: '0x0000000000000000000000000000000000000001', value: 2000000000000000000n })
+  assert.ok(logged.some(line => line.includes('Withdrawing part 1/3: 5 ETH...')))
+  assert.ok(logged.some(line => line.includes('Withdrawing part 2/3: 5 ETH...')))
+  assert.ok(logged.some(line => line.includes('Withdrawing part 3/3: 2 ETH...')))
+})
+
+test('automatically falls back to withdrawing in parts when direct withdraw fails', async () => {
+  const logged = []
+  const logger = {
+    log: (...args) => logged.push(args.join(' '))
+  }
+
+  const txsSent = []
+  const mockBlock = {
+    number: '0xa',
+    hash: '0xblockhash',
+    transactions: [],
+    withdrawals: [
+      {
+        address: '0x0000000000000000000000000000000000000001',
+        amount: '12000000000' // 12 billion Gwei = 12 ETH
+      }
+    ]
+  }
+
+  class Provider {
+    async getNetwork () {
+      return { chainId: 1n }
+    }
+
+    async getBlockNumber () {
+      return 10
+    }
+
+    async send (method) {
+      if (method === 'eth_getBlockByNumber') {
+        return mockBlock
+      }
+    }
+  }
+
+  class Wallet {
+    async sendTransaction (tx) {
+      if (txsSent.length === 0) {
+        txsSent.push(tx) // direct attempt
+        throw new Error('Transaction pool full or gas too low')
+      }
+      txsSent.push(tx)
+      return {
+        hash: `0xhashfallback${txsSent.length}`,
+        wait: async () => ({ blockNumber: 11 })
+      }
+    }
+  }
+
+  const deps = {
+    JsonRpcProvider: Provider,
+    Wallet,
+    toBeHex: (val) => '0x' + val.toString(16),
+    formatEther: (val) => (Number(val) / 1e18).toString(),
+    parseEther: (val) => BigInt(Number(val) * 1e18)
+  }
+
+  const result = await main(
+    {
+      ...VALID_ENV,
+      START_BLOCK: '10',
+      END_BLOCK: '10',
+      BROADCAST: 'true',
+      PRIVATE_KEY: '0xprivatekey',
+      CONFIRM_TRANSACTION: 'WITHDRAW 12.0 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1',
+      TARGET_ADDRESS: '0x0000000000000000000000000000000000000001'
+    },
+    deps,
+    logger
+  )
+
+  assert.equal(result.broadcast, true)
+  assert.equal(txsSent.length, 4) // 1 direct attempt + 3 chunks of 5 ETH
+  assert.deepEqual(txsSent[0], { to: '0x0000000000000000000000000000000000000001', value: 12000000000000000000n })
+  assert.deepEqual(txsSent[1], { to: '0x0000000000000000000000000000000000000001', value: 5000000000000000000n })
+  assert.deepEqual(txsSent[2], { to: '0x0000000000000000000000000000000000000001', value: 5000000000000000000n })
+  assert.deepEqual(txsSent[3], { to: '0x0000000000000000000000000000000000000001', value: 2000000000000000000n })
+  assert.ok(logged.some(line => line.includes('Direct withdraw failed: Transaction pool full or gas too low')))
+  assert.ok(logged.some(line => line.includes('Falling back to withdrawing in parts of 5 ETH...')))
+})
+
+
