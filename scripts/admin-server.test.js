@@ -20,6 +20,25 @@ let oauthUrl;
 let rpcServer;
 let rpcUrl;
 
+test('exports every dashboard action as a Vercel API route', () => {
+  const adminService = require('../lib/admin-service');
+  const routes = {
+    block: 'block',
+    'check-balance': 'checkBalance',
+    'check-blocks': 'checkBlocks',
+    dashboard: 'dashboard',
+    login: 'login',
+    logout: 'logout',
+    'send-eth': 'sendEth',
+    transaction: 'transaction',
+    withdraw: 'withdraw'
+  };
+
+  for (const [route, handler] of Object.entries(routes)) {
+    assert.equal(require(`../api/admin/${route}`), adminService[handler]);
+  }
+});
+
 function listen(server) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -39,7 +58,7 @@ async function availablePort() {
   return port;
 }
 
-async function startAdmin() {
+async function startAdmin(envOverrides = {}) {
   adminPort = await availablePort();
   adminProcess = spawn(process.execPath, ['admin-server.js'], {
     cwd: repositoryRoot,
@@ -56,7 +75,8 @@ async function startAdmin() {
         `http://127.0.0.1:${adminPort}/api/admin/callback`,
       GITHUB_CLIENT_ID: 'test-client-id',
       GITHUB_CLIENT_SECRET: 'test-client-secret',
-      GITHUB_TOKEN_URL: `${oauthUrl}/login/oauth/access_token`
+      GITHUB_TOKEN_URL: `${oauthUrl}/login/oauth/access_token`,
+      ...envOverrides
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -311,9 +331,13 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
     const html = await page.text();
     const css = await adminRequest('/admin/admin.css');
     const javascript = await adminRequest('/admin/admin.js');
+    const javascriptSource = await javascript.text();
 
     assert.match(html, /href="\/admin\/admin\.css"/);
     assert.match(html, /src="\/admin\/admin\.js"/);
+    assert.match(html, /id="adminIdentity"/);
+    assert.match(html, /id="withdrawTarget"/);
+    assert.match(javascriptSource, /withdrawTarget/);
     assert.equal(css.status, 200);
     assert.equal(javascript.status, 200);
   });
@@ -326,6 +350,15 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
     });
 
     assert.equal(response.status, 200);
+    const body = await response.json();
+    const { sessionExpiresAt, ...admin } = body.admin;
+    assert.deepEqual(admin, {
+      authenticationDisabled: false,
+      canSetTargetAddress: true,
+      githubLogin: 'test-admin',
+      githubUserId: '123456'
+    });
+    assert.equal(Number.isSafeInteger(sessionExpiresAt), true);
   });
 
   await t.test('accepts block zero through the Vercel API route', async () => {
@@ -369,6 +402,7 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
       },
       body: JSON.stringify({
         mockRpc: 'true',
+        targetAddress: '0x0000000000000000000000000000000000000002',
         startBlock: 20000000,
         endBlock: 20000000
       })
@@ -380,6 +414,13 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.ok(Array.isArray(body.logs));
+    assert.ok(
+      body.logs.some(line =>
+        line.includes(
+          'Filtering for target address: 0x0000000000000000000000000000000000000002'
+        )
+      )
+    );
   });
 
   await t.test('handles send-eth through the API route', async () => {
@@ -412,6 +453,7 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
       },
       body: JSON.stringify({
         mockRpc: 'true',
+        targetAddress: '0x0000000000000000000000000000000000000002',
         toAddress: '0x06ee840642a33367ee59fca237f270d5119d1356',
         chainId: 1,
         startBlock: 20000000,
@@ -423,6 +465,50 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
     const body = await response.json();
     assert.ok(body.result);
     assert.ok(Array.isArray(body.logs));
+    assert.ok(
+      body.logs.some(line =>
+        line.includes(
+          'Filtering for target address: 0x0000000000000000000000000000000000000002'
+        )
+      )
+    );
+  });
+
+  await t.test('requires OAuth access for target-address overrides', async () => {
+    await stopAdmin();
+    await startAdmin({ DISABLE_ADMIN_AUTH: 'true' });
+
+    try {
+      const dashboardResponse = await adminRequest('/api/admin/dashboard');
+      const dashboardBody = await dashboardResponse.json();
+      assert.equal(dashboardResponse.status, 200);
+      assert.deepEqual(dashboardBody.admin, {
+        authenticationDisabled: true,
+        canSetTargetAddress: false,
+        githubLogin: null,
+        githubUserId: null,
+        sessionExpiresAt: null
+      });
+
+      const response = await adminRequest('/api/admin/check-blocks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          mockRpc: 'true',
+          targetAddress: '0x0000000000000000000000000000000000000002'
+        })
+      });
+
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), {
+        error: 'GitHub OAuth admin access is required to set a target address'
+      });
+    } finally {
+      await stopAdmin();
+      await startAdmin();
+    }
   });
 
   await t.test('rejects a tampered signature', async () => {

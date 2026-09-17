@@ -21,6 +21,26 @@ test('validates transaction inputs', () => {
   assert.throws(() => loadConfig({ ...VALID_ENV, CHAIN_ID: 'mainnet' }, 1000000000n), /positive integer/)
 })
 
+test('validates the beacon target address before connecting to RPC', async () => {
+  let providerCreated = false
+
+  class Provider {
+    constructor () {
+      providerCreated = true
+    }
+  }
+
+  await assert.rejects(
+    main(
+      { ...VALID_ENV, TARGET_ADDRESS: 'not-an-address' },
+      { JsonRpcProvider: Provider },
+      { log: () => {} }
+    ),
+    /TARGET_ADDRESS must be a valid Ethereum address/
+  )
+  assert.equal(providerCreated, false)
+})
+
 test('defaults to a dry run without requiring a private key', () => {
   const config = loadConfig(VALID_ENV, 1000000000000000000n)
 
@@ -388,7 +408,7 @@ test('withdraws in sequential parts when PART_SIZE_ETH is specified', async () =
   assert.ok(logged.some(line => line.includes('Withdrawing part 3/3: 2 ETH...')))
 })
 
-test('automatically falls back to withdrawing in parts when direct withdraw fails', async () => {
+test('does not automatically retry when direct withdraw submission fails', async () => {
   const logged = []
   const logger = {
     log: (...args) => logged.push(args.join(' '))
@@ -425,15 +445,8 @@ test('automatically falls back to withdrawing in parts when direct withdraw fail
 
   class Wallet {
     async sendTransaction (tx) {
-      if (txsSent.length === 0) {
-        txsSent.push(tx) // direct attempt
-        throw new Error('Transaction pool full or gas too low')
-      }
       txsSent.push(tx)
-      return {
-        hash: `0xhashfallback${txsSent.length}`,
-        wait: async () => ({ blockNumber: 11 })
-      }
+      throw new Error('Transaction submission timed out')
     }
   }
 
@@ -445,28 +458,73 @@ test('automatically falls back to withdrawing in parts when direct withdraw fail
     parseEther: (val) => BigInt(Number(val) * 1e18)
   }
 
-  const result = await main(
-    {
-      ...VALID_ENV,
-      START_BLOCK: '10',
-      END_BLOCK: '10',
-      BROADCAST: 'true',
-      PRIVATE_KEY: '0xprivatekey',
-      CONFIRM_TRANSACTION: 'WITHDRAW 12.0 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1',
-      TARGET_ADDRESS: '0x0000000000000000000000000000000000000001'
-    },
-    deps,
-    logger
+  await assert.rejects(
+    main(
+      {
+        ...VALID_ENV,
+        START_BLOCK: '10',
+        END_BLOCK: '10',
+        BROADCAST: 'true',
+        PRIVATE_KEY: '0xprivatekey',
+        CONFIRM_TRANSACTION: 'WITHDRAW 12.0 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1',
+        TARGET_ADDRESS: '0x0000000000000000000000000000000000000001'
+      },
+      deps,
+      logger
+    ),
+    /Transaction submission timed out/
   )
 
-  assert.equal(result.broadcast, true)
-  assert.equal(txsSent.length, 4) // 1 direct attempt + 3 chunks of 5 ETH
+  assert.equal(txsSent.length, 1)
   assert.deepEqual(txsSent[0], { to: '0x0000000000000000000000000000000000000001', value: 12000000000000000000n })
-  assert.deepEqual(txsSent[1], { to: '0x0000000000000000000000000000000000000001', value: 5000000000000000000n })
-  assert.deepEqual(txsSent[2], { to: '0x0000000000000000000000000000000000000001', value: 5000000000000000000n })
-  assert.deepEqual(txsSent[3], { to: '0x0000000000000000000000000000000000000001', value: 2000000000000000000n })
-  assert.ok(logged.some(line => line.includes('Direct withdraw failed: Transaction pool full or gas too low')))
-  assert.ok(logged.some(line => line.includes('Falling back to withdrawing in parts of 5 ETH...')))
+  assert.equal(logged.some(line => line.includes('Falling back')), false)
 })
 
+test('does not resend funds when confirmation fails after broadcast', async () => {
+  const txsSent = []
 
+  class Provider {
+    async getNetwork () {
+      return { chainId: 1n }
+    }
+  }
+
+  class Wallet {
+    async sendTransaction (tx) {
+      txsSent.push(tx)
+      return {
+        hash: '0xhash',
+        wait: async () => {
+          throw new Error('Confirmation failed')
+        }
+      }
+    }
+  }
+
+  const totalWei = 12000000000000000000n
+  const config = loadConfig(
+    {
+      ...VALID_ENV,
+      BROADCAST: 'true',
+      PRIVATE_KEY: '0xprivatekey',
+      CONFIRM_TRANSACTION: 'WITHDRAW 12.0 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1'
+    },
+    totalWei
+  )
+
+  await assert.rejects(
+    withdraw(
+      config,
+      {
+        JsonRpcProvider: Provider,
+        Wallet,
+        formatEther: (val) => (Number(val) / 1e18).toString(),
+        parseEther: (val) => BigInt(Number(val) * 1e18)
+      },
+      { log: () => {} }
+    ),
+    /Confirmation failed/
+  )
+
+  assert.equal(txsSent.length, 1)
+})

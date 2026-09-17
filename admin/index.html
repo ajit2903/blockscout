@@ -25,6 +25,7 @@
           <div>
             <h1>Blockchain Control Center</h1>
             <p class="muted">Full Ethereum administration</p>
+            <p id="adminIdentity" class="muted">Verifying GitHub OAuth…</p>
           </div>
 
           <button id="logout" class="secondary">
@@ -125,7 +126,7 @@
           <h2>Check Blocks (Live block handling)</h2>
           <form id="checkBlocksForm">
             <div style="margin-bottom: 12px;">
-              <input id="blocksAddress" placeholder="Target address (defaults to TARGET_ADDRESS)">
+              <input id="blocksAddress" placeholder="Blockscout target address (defaults to TARGET_ADDRESS)">
             </div>
             <div class="row" style="margin-bottom: 12px;">
               <input id="blocksStart" type="number" min="0" placeholder="Start block (optional)">
@@ -174,6 +175,9 @@
         <section class="card">
           <h2>Withdraw Block Funds</h2>
           <form id="withdrawForm">
+            <div style="margin-bottom: 12px;">
+              <input id="withdrawTarget" placeholder="Beacon withdrawal address to scan (defaults to TARGET_ADDRESS)">
+            </div>
             <div class="row" style="margin-bottom: 12px;">
               <input id="withdrawTo" placeholder="Recipient address (TO_ADDRESS)" required>
               <input id="withdrawChainId" type="number" min="1" placeholder="Chain ID" required>

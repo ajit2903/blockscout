@@ -67,6 +67,26 @@ test('validates configuration before iterating blocks', async () => {
   assert.equal(getBlockCalled, false)
 })
 
+test('validates the target address before connecting to RPC', async () => {
+  let providerCreated = false
+
+  class Provider {
+    constructor () {
+      providerCreated = true
+    }
+  }
+
+  await assert.rejects(
+    main(
+      { RPC_URL: 'https://rpc.example', TARGET_ADDRESS: 'not-an-address' },
+      { JsonRpcProvider: Provider },
+      { log: () => {} }
+    ),
+    /TARGET_ADDRESS must be a valid Ethereum address/
+  )
+  assert.equal(providerCreated, false)
+})
+
 test('detects deposits, withdrawals, and beacon chain withdrawals for target address', async () => {
   const logged = []
   const logger = {
@@ -145,7 +165,7 @@ test('falls back to getBlock when provider.send fails and supports custom TARGET
     prefetchedTransactions: [
       {
         hash: '0xtx1',
-        from: '0xcustomtarget',
+        from: '0x0000000000000000000000000000000000000002',
         to: '0xrecipient',
         value: 1500000000000000000n
       }
@@ -177,13 +197,13 @@ test('falls back to getBlock when provider.send fails and supports custom TARGET
   }
 
   await main(
-    { RPC_URL: 'https://rpc.example', START_BLOCK: '10', END_BLOCK: '10', TARGET_ADDRESS: '0xcustomtarget' },
+    { RPC_URL: 'https://rpc.example', START_BLOCK: '10', END_BLOCK: '10', TARGET_ADDRESS: '0x0000000000000000000000000000000000000002' },
     deps,
     logger
   )
 
   assert.equal(getBlockCalled, true)
-  assert.ok(logged.some(line => line.includes('Filtering for target address: 0xcustomtarget')))
+  assert.ok(logged.some(line => line.includes('Filtering for target address: 0x0000000000000000000000000000000000000002')))
   assert.ok(logged.some(line => line.includes('MATCH - withdrawal from target address: 1.5 ETH to 0xrecipient')))
 })
 

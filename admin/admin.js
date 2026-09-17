@@ -66,6 +66,16 @@ async function refreshDashboard() {
         ? JSON.stringify(data.network.syncing)
         : 'No';
 
+    document.querySelector('#adminIdentity').textContent =
+      data.admin.authenticationDisabled
+        ? 'GitHub OAuth disabled · using server-configured target address'
+        : `GitHub OAuth: @${data.admin.githubLogin} (ID ${data.admin.githubUserId}) · target-address access enabled`;
+
+    for (const id of ['balanceAddress', 'blocksAddress', 'withdrawTarget']) {
+      document.querySelector(`#${id}`).disabled =
+        !data.admin.canSetTargetAddress;
+    }
+
     showPanel();
   } catch (error) {
     if (error.message === 'Authentication required') {
@@ -252,6 +262,7 @@ document
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
+          targetAddress: document.querySelector('#withdrawTarget').value.trim() || undefined,
           toAddress: document.querySelector('#withdrawTo').value.trim(),
           chainId: document.querySelector('#withdrawChainId').value,
           startBlock: document.querySelector('#withdrawStart').value || undefined,
