@@ -20,12 +20,15 @@ Configure these variables for the Production environment and redeploy:
 
 - `GITHUB_CLIENT_ID`: OAuth app client ID
 - `GITHUB_CLIENT_SECRET`: OAuth app client secret
-- `GITHUB_CALLBACK_URL`: exact callback URL configured in GitHub
 - `GITHUB_ADMIN_IDS`: comma-separated numeric GitHub user IDs allowed to sign in
 - `ADMIN_SESSION_SECRET`: random secret containing at least 32 bytes
 - `ETHEREUM_RPC_URL`: Ethereum JSON-RPC endpoint
 
 `ADMIN_COOKIE_SECURE=false` is available only for local HTTP development.
+
+The OAuth request intentionally omits `redirect_uri`, so GitHub uses the
+Authorization callback URL registered on the OAuth app. Configure one exact
+callback URL for the production deployment.
 
 After sign-in, the dashboard displays the GitHub login and numeric ID from the
 signed admin session. Only IDs in `GITHUB_ADMIN_IDS` receive access.

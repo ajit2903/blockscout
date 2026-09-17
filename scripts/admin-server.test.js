@@ -71,8 +71,6 @@ async function startAdmin(envOverrides = {}) {
       GITHUB_ADMIN_IDS: '123456',
       GITHUB_API_URL: `${oauthUrl}/user`,
       GITHUB_AUTHORIZE_URL: `${oauthUrl}/login/oauth/authorize`,
-      GITHUB_CALLBACK_URL:
-        `http://127.0.0.1:${adminPort}/api/admin/callback`,
       GITHUB_CLIENT_ID: 'test-client-id',
       GITHUB_CLIENT_SECRET: 'test-client-secret',
       GITHUB_TOKEN_URL: `${oauthUrl}/login/oauth/access_token`,
@@ -260,6 +258,7 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
   assert.equal(login.location.origin, oauthUrl);
   assert.equal(login.location.pathname, '/login/oauth/authorize');
   assert.equal(login.location.searchParams.get('client_id'), 'test-client-id');
+  assert.equal(login.location.searchParams.has('redirect_uri'), false);
   assert.equal(login.location.searchParams.get('code_challenge_method'), 'S256');
   assert.match(login.location.searchParams.get('code_challenge'), /^[\w-]{43}$/);
   assert.match(login.location.searchParams.get('state'), /^[\w-]{43}$/);
@@ -321,6 +320,7 @@ test('uses GitHub OAuth and signed, secure session cookies', async t => {
   assert.match(sessionHeader, /; Secure/i);
   assert.match(sessionHeader, /; Max-Age=43200/i);
   assert.equal(oauthTokenRequests.at(-1).get('code'), 'test-code');
+  assert.equal(oauthTokenRequests.at(-1).has('redirect_uri'), false);
   assert.match(
     oauthTokenRequests.at(-1).get('code_verifier'),
     /^[\w-]{43}$/
