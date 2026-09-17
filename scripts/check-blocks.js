@@ -2,6 +2,16 @@ const { ethers } = require('ethers')
 
 const MAX_BLOCK_RANGE = 1000
 
+function targetAddress (env) {
+  const value = env.TARGET_ADDRESS || '0x06EE840642a33367ee59fCA237F270d5119d1356'
+
+  if (!ethers.isAddress(value)) {
+    throw new Error('TARGET_ADDRESS must be a valid Ethereum address')
+  }
+
+  return ethers.getAddress(value).toLowerCase()
+}
+
 function parseInteger (name, value, positive = false) {
   if (!/^\d+$/.test(value)) {
     throw new Error(`${name} must be a ${positive ? 'positive' : 'non-negative'} integer`)
@@ -44,15 +54,14 @@ async function main (env = process.env, dependencies = ethers, logger = console)
     throw new Error('RPC_URL is required')
   }
 
+  const normalizedTargetAddress = targetAddress(env)
   const provider = new dependencies.JsonRpcProvider(env.RPC_URL)
 
   const latestBlock = await provider.getBlockNumber()
   const { endBlock, startBlock } = getBlockRange(env, latestBlock)
 
-  const targetAddress = (env.TARGET_ADDRESS || '0x06EE840642a33367ee59fCA237F270d5119d1356').toLowerCase()
-
   logger.log(`Checking blocks ${startBlock} to ${endBlock} (latest: ${latestBlock})`)
-  logger.log(`Filtering for target address: ${targetAddress}`)
+  logger.log(`Filtering for target address: ${normalizedTargetAddress}`)
 
   for (let blockNumber = startBlock; blockNumber <= endBlock; blockNumber++) {
     let block
@@ -137,11 +146,11 @@ async function main (env = process.env, dependencies = ethers, logger = console)
       const from = (tx.from || '').toLowerCase()
       const to = (tx.to || '').toLowerCase()
 
-      if (from === targetAddress) {
+      if (from === normalizedTargetAddress) {
         const val = tx.value ? dependencies.formatEther(tx.value) : '0'
         logger.log(`    MATCH - withdrawal from target address: ${val} ETH to ${tx.to}`)
       }
-      if (to === targetAddress) {
+      if (to === normalizedTargetAddress) {
         const val = tx.value ? dependencies.formatEther(tx.value) : '0'
         logger.log(`    MATCH - deposit to target address: ${val} ETH from ${tx.from}`)
       }
@@ -149,7 +158,7 @@ async function main (env = process.env, dependencies = ethers, logger = console)
 
     for (const w of withdrawals) {
       const wAddress = (w.address || '').toLowerCase()
-      if (wAddress === targetAddress) {
+      if (wAddress === normalizedTargetAddress) {
         let amt = w.amount
         if (typeof amt === 'string' || typeof amt === 'number') {
           try {

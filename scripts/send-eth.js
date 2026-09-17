@@ -130,7 +130,7 @@ async function sendEth (config, dependencies = ethers, logger = console) {
   }
 
   const totalValue = config.value
-  let chunks = []
+  const chunks = []
   if (config.partSizeWei && config.partSizeWei < totalValue) {
     let remaining = totalValue
     while (remaining > 0n) {
@@ -169,28 +169,12 @@ async function sendEth (config, dependencies = ethers, logger = console) {
       value: totalValue,
       ...config.txOptions
     }
-    try {
-      logger.log(`Sending direct transaction of ${config.amountEth} ETH to ${config.toAddress}...`)
-      const txResponse = await wallet.sendTransaction(tx)
-      logger.log('Transaction hash:', txResponse.hash)
-      const receipt = await txResponse.wait()
-      logger.log('Transaction confirmed in block', receipt.blockNumber)
-      return { broadcast: true, receipt, txResponse }
-    } catch (error) {
-      logger.log(`Direct transaction failed: ${error.message}`)
-      const fallbackPartWei = config.partSizeWei || dependencies.parseEther('5')
-      if (fallbackPartWei >= totalValue) {
-        throw error
-      }
-      logger.log(`Falling back to sending in parts of ${dependencies.formatEther(fallbackPartWei)} ETH...`)
-      let remaining = totalValue
-      chunks = []
-      while (remaining > 0n) {
-        const chunk = remaining < fallbackPartWei ? remaining : fallbackPartWei
-        chunks.push(chunk)
-        remaining -= chunk
-      }
-    }
+    logger.log(`Sending direct transaction of ${config.amountEth} ETH to ${config.toAddress}...`)
+    const txResponse = await wallet.sendTransaction(tx)
+    logger.log('Transaction hash:', txResponse.hash)
+    const receipt = await txResponse.wait()
+    logger.log('Transaction confirmed in block', receipt.blockNumber)
+    return { broadcast: true, receipt, txResponse }
   }
 
   const receipts = []

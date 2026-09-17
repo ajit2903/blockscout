@@ -120,7 +120,7 @@ async function withdraw (config, dependencies = ethers, logger = console) {
   }
 
   const totalValue = config.value
-  let chunks = []
+  const chunks = []
   if (config.partSizeWei && config.partSizeWei < totalValue) {
     let remaining = totalValue
     while (remaining > 0n) {
@@ -159,28 +159,12 @@ async function withdraw (config, dependencies = ethers, logger = console) {
       value: totalValue,
       ...config.txOptions
     }
-    try {
-      logger.log(`Withdrawing directly ${config.amountEth} ETH to ${config.toAddress}...`)
-      const txResponse = await wallet.sendTransaction(tx)
-      logger.log('Transaction hash:', txResponse.hash)
-      const receipt = await txResponse.wait()
-      logger.log('Transaction confirmed in block', receipt.blockNumber)
-      return { broadcast: true, receipt, txResponse, value: totalValue }
-    } catch (error) {
-      logger.log(`Direct withdraw failed: ${error.message}`)
-      const fallbackPartWei = config.partSizeWei || dependencies.parseEther('5')
-      if (fallbackPartWei >= totalValue) {
-        throw error
-      }
-      logger.log(`Falling back to withdrawing in parts of ${dependencies.formatEther(fallbackPartWei)} ETH...`)
-      let remaining = totalValue
-      chunks = []
-      while (remaining > 0n) {
-        const chunk = remaining < fallbackPartWei ? remaining : fallbackPartWei
-        chunks.push(chunk)
-        remaining -= chunk
-      }
-    }
+    logger.log(`Withdrawing directly ${config.amountEth} ETH to ${config.toAddress}...`)
+    const txResponse = await wallet.sendTransaction(tx)
+    logger.log('Transaction hash:', txResponse.hash)
+    const receipt = await txResponse.wait()
+    logger.log('Transaction confirmed in block', receipt.blockNumber)
+    return { broadcast: true, receipt, txResponse, value: totalValue }
   }
 
   const receipts = []
@@ -217,11 +201,15 @@ async function main (env = process.env, dependencies = ethers, logger = console)
     throw new Error('RPC_URL is required')
   }
 
+  const targetAddressInput = env.TARGET_ADDRESS || '0x06EE840642a33367ee59fCA237F270d5119d1356'
+  if (!ethers.isAddress(targetAddressInput)) {
+    throw new Error('TARGET_ADDRESS must be a valid Ethereum address')
+  }
+
+  const targetAddress = ethers.getAddress(targetAddressInput).toLowerCase()
   const provider = new dependencies.JsonRpcProvider(env.RPC_URL)
   const latestBlock = await provider.getBlockNumber()
   const { endBlock, startBlock } = getBlockRange(env, latestBlock)
-
-  const targetAddress = (env.TARGET_ADDRESS || '0x06EE840642a33367ee59fCA237F270d5119d1356').toLowerCase()
 
   logger.log(`Scanning blocks ${startBlock} to ${endBlock} for funds to withdraw...`)
   logger.log(`Filtering for target address: ${targetAddress}`)

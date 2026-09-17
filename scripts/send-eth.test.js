@@ -252,7 +252,7 @@ test('broadcasts transaction in sequential parts when PART_SIZE_ETH is specified
   assert.ok(logged.some(line => line.includes('Sending part 3/3: 2 ETH...')))
 })
 
-test('automatically falls back to sending in parts when direct transaction fails', async () => {
+test('does not automatically retry when direct transaction submission fails', async () => {
   const logged = []
   const logger = {
     log: (...args) => logged.push(args.join(' '))
@@ -267,15 +267,8 @@ test('automatically falls back to sending in parts when direct transaction fails
 
   class Wallet {
     async sendTransaction (tx) {
-      if (txsSent.length === 0) {
-        txsSent.push(tx) // direct attempt
-        throw new Error('Transaction pool full or gas too low')
-      }
       txsSent.push(tx)
-      return {
-        hash: `0xhashfallback${txsSent.length}`,
-        wait: async () => ({ blockNumber: 10 + txsSent.length })
-      }
+      throw new Error('Transaction submission timed out')
     }
   }
 
@@ -286,27 +279,67 @@ test('automatically falls back to sending in parts when direct transaction fails
     parseEther: (val) => BigInt(Number(val) * 1e18)
   }
 
-  const result = await main(
-    {
-      ...VALID_ENV,
-      AMOUNT_ETH: '12',
-      BROADCAST: 'true',
-      PRIVATE_KEY: '0xprivatekey',
-      CONFIRM_TRANSACTION: 'SEND 12 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1'
-    },
-    deps,
-    logger
+  await assert.rejects(
+    main(
+      {
+        ...VALID_ENV,
+        AMOUNT_ETH: '12',
+        BROADCAST: 'true',
+        PRIVATE_KEY: '0xprivatekey',
+        CONFIRM_TRANSACTION: 'SEND 12 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1'
+      },
+      deps,
+      logger
+    ),
+    /Transaction submission timed out/
   )
 
-  assert.equal(result.broadcast, true)
-  assert.equal(txsSent.length, 4) // 1 direct attempt + 3 chunks of 5 ETH
+  assert.equal(txsSent.length, 1)
   assert.deepEqual(txsSent[0], { to: '0x0000000000000000000000000000000000000001', value: 12000000000000000000n })
-  assert.deepEqual(txsSent[1], { to: '0x0000000000000000000000000000000000000001', value: 5000000000000000000n })
-  assert.deepEqual(txsSent[2], { to: '0x0000000000000000000000000000000000000001', value: 5000000000000000000n })
-  assert.deepEqual(txsSent[3], { to: '0x0000000000000000000000000000000000000001', value: 2000000000000000000n })
-  assert.ok(logged.some(line => line.includes('Direct transaction failed: Transaction pool full or gas too low')))
-  assert.ok(logged.some(line => line.includes('Falling back to sending in parts of 5 ETH...')))
+  assert.equal(logged.some(line => line.includes('Falling back')), false)
 })
 
+test('does not resend funds when confirmation fails after broadcast', async () => {
+  const txsSent = []
 
+  class Provider {
+    async getNetwork () {
+      return { chainId: 1n }
+    }
+  }
+
+  class Wallet {
+    async sendTransaction (tx) {
+      txsSent.push(tx)
+      return {
+        hash: '0xhash',
+        wait: async () => {
+          throw new Error('Confirmation failed')
+        }
+      }
+    }
+  }
+
+  await assert.rejects(
+    main(
+      {
+        ...VALID_ENV,
+        AMOUNT_ETH: '12',
+        BROADCAST: 'true',
+        PRIVATE_KEY: '0xprivatekey',
+        CONFIRM_TRANSACTION: 'SEND 12 ETH TO 0x0000000000000000000000000000000000000001 ON CHAIN 1'
+      },
+      {
+        JsonRpcProvider: Provider,
+        Wallet,
+        formatEther: (val) => (Number(val) / 1e18).toString(),
+        parseEther: (val) => BigInt(Number(val) * 1e18)
+      },
+      { log: () => {} }
+    ),
+    /Confirmation failed/
+  )
+
+  assert.equal(txsSent.length, 1)
+})
 
