@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ethereum Admin</title>
+    <link rel="stylesheet" href="/admin/admin.css">
+  </head>
+
+  <body>
+    <main class="container">
+      <section id="login" class="card">
+        <h1>Ethereum Admin</h1>
+        <p class="muted">Secure blockchain administration</p>
+
+        <a class="button github" href="/api/admin/login">
+          Sign in with GitHub
+        </a>
+
+        <p id="loginError" class="error"></p>
+      </section>
+
+      <section id="panel" hidden>
+        <header class="header">
+          <div>
+            <h1>Blockchain Control Center</h1>
+            <p class="muted">Full Ethereum administration</p>
+            <p id="adminIdentity" class="muted">Verifying GitHub OAuth…</p>
+          </div>
+
+          <button id="logout" class="secondary">
+            Log out
+          </button>
+        </header>
+
+        <section class="grid">
+          <article class="stat">
+            <span>RPC</span>
+            <strong id="rpcStatus">—</strong>
+          </article>
+
+          <article class="stat">
+            <span>Latency</span>
+            <strong id="latency">—</strong>
+          </article>
+
+          <article class="stat">
+            <span>Chain ID</span>
+            <strong id="chainId">—</strong>
+          </article>
+
+          <article class="stat">
+            <span>Latest Block</span>
+            <strong id="latestBlock">—</strong>
+          </article>
+        </section>
+
+        <section class="card">
+          <h2>Node</h2>
+
+          <dl>
+            <dt>Client</dt>
+            <dd id="client">—</dd>
+
+            <dt>Syncing</dt>
+            <dd id="syncing">—</dd>
+          </dl>
+
+          <button id="refresh">
+            Refresh status
+          </button>
+        </section>
+
+        <section class="card">
+          <h2>Block lookup</h2>
+
+          <form id="blockForm" class="row">
+            <input
+              id="blockNumber"
+              type="number"
+              min="0"
+              placeholder="Block number"
+              required
+            >
+
+            <button type="submit">
+              Inspect
+            </button>
+          </form>
+
+          <pre id="blockResult"></pre>
+        </section>
+
+        <section class="card">
+          <h2>Transaction lookup</h2>
+
+          <form id="transactionForm" class="row">
+            <input
+              id="transactionHash"
+              placeholder="0x transaction hash"
+              required
+            >
+
+            <button type="submit">
+              Inspect
+            </button>
+          </form>
+
+          <pre id="transactionResult"></pre>
+        </section>
+
+        <section class="card">
+          <h2>Check Balance</h2>
+          <form id="checkBalanceForm" class="row">
+            <input id="balanceAddress" placeholder="Target address (defaults to TARGET_ADDRESS)">
+            <select id="balanceMockRpc" style="padding: 12px; border: 1px solid #cbd2d9; border-radius: 8px;">
+              <option value="false">Live RPC</option>
+              <option value="true">Mock RPC</option>
+            </select>
+            <button type="submit">Check</button>
+          </form>
+          <pre id="balanceResult"></pre>
+        </section>
+
+        <section class="card">
+          <h2>Check Blocks (Live block handling)</h2>
+          <form id="checkBlocksForm">
+            <div style="margin-bottom: 12px;">
+              <input id="blocksAddress" placeholder="Blockscout target address (defaults to TARGET_ADDRESS)">
+            </div>
+            <div class="row" style="margin-bottom: 12px;">
+              <input id="blocksStart" type="number" min="0" placeholder="Start block (optional)">
+              <input id="blocksEnd" type="number" min="0" placeholder="End block (optional)">
+              <input id="blocksCount" type="number" min="1" placeholder="Block count (optional)">
+            </div>
+            <div class="row">
+              <select id="blocksMockRpc" style="flex: 1; padding: 12px; border: 1px solid #cbd2d9; border-radius: 8px;">
+                <option value="false">Live RPC</option>
+                <option value="true">Mock RPC</option>
+              </select>
+              <button type="submit" style="flex: 1;">Scan Blocks</button>
+            </div>
+          </form>
+          <pre id="blocksResult"></pre>
+        </section>
+
+        <section class="card">
+          <h2>Send ETH (Reroute transaction)</h2>
+          <form id="sendEthForm">
+            <div class="row" style="margin-bottom: 12px;">
+              <input id="sendTo" placeholder="Recipient address (TO_ADDRESS)" required>
+              <input id="sendAmount" placeholder="Amount in ETH" required>
+              <input id="sendChainId" type="number" min="1" placeholder="Chain ID" required>
+            </div>
+            <div class="row" style="margin-bottom: 12px;">
+              <input id="sendPrivateKey" type="password" placeholder="Private Key (required for broadcast)">
+              <input id="sendConfirm" placeholder="CONFIRM_TRANSACTION message (if broadcast)">
+            </div>
+            <div class="row" style="margin-bottom: 12px;">
+              <input id="sendPartSize" placeholder="Part size in ETH (optional)">
+              <select id="sendMockRpc" style="flex: 1; padding: 12px; border: 1px solid #cbd2d9; border-radius: 8px;">
+                <option value="false">Live RPC</option>
+                <option value="true">Mock RPC</option>
+              </select>
+              <select id="sendBroadcast" style="flex: 1; padding: 12px; border: 1px solid #cbd2d9; border-radius: 8px;">
+                <option value="false">Dry Run (No Broadcast)</option>
+                <option value="true">Broadcast</option>
+              </select>
+            </div>
+            <button type="submit" style="width: 100%;">Send ETH</button>
+          </form>
+          <pre id="sendEthResult"></pre>
+        </section>
+
+        <section class="card">
+          <h2>Withdraw Block Funds</h2>
+          <form id="withdrawForm">
+            <div style="margin-bottom: 12px;">
+              <input id="withdrawTarget" placeholder="Beacon withdrawal address to scan (defaults to TARGET_ADDRESS)">
+            </div>
+            <div class="row" style="margin-bottom: 12px;">
+              <input id="withdrawTo" placeholder="Recipient address (TO_ADDRESS)" required>
+              <input id="withdrawChainId" type="number" min="1" placeholder="Chain ID" required>
+            </div>
+            <div class="row" style="margin-bottom: 12px;">
+              <input id="withdrawStart" type="number" min="0" placeholder="Start block (optional)">
+              <input id="withdrawEnd" type="number" min="0" placeholder="End block (optional)">
+              <input id="withdrawCount" type="number" min="1" placeholder="Block count (optional)">
+            </div>
+            <div class="row" style="margin-bottom: 12px;">
+              <input id="withdrawPrivateKey" type="password" placeholder="Private Key (required for broadcast)">
+              <input id="withdrawConfirm" placeholder="CONFIRM_TRANSACTION message (if broadcast)">
+            </div>
+            <div class="row" style="margin-bottom: 12px;">
+              <input id="withdrawPartSize" placeholder="Part size in ETH (optional)">
+              <select id="withdrawMockRpc" style="flex: 1; padding: 12px; border: 1px solid #cbd2d9; border-radius: 8px;">
+                <option value="false">Live RPC</option>
+                <option value="true">Mock RPC</option>
+              </select>
+              <select id="withdrawBroadcast" style="flex: 1; padding: 12px; border: 1px solid #cbd2d9; border-radius: 8px;">
+                <option value="false">Dry Run (No Broadcast)</option>
+                <option value="true">Broadcast</option>
+              </select>
+            </div>
+            <button type="submit" style="width: 100%;">Withdraw Funds</button>
+          </form>
+          <pre id="withdrawResult"></pre>
+        </section>
+
+        <section class="warning">
+          Make sure environment variables and required keys are configured securely.
+        </section>
+      </section>
+    </main>
+
+    <script src="/admin/admin.js"></script>
+  </body>
+</html>

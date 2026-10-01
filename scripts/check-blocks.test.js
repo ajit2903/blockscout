@@ -66,3 +66,244 @@ test('validates configuration before iterating blocks', async () => {
   )
   assert.equal(getBlockCalled, false)
 })
+
+test('validates the target address before connecting to RPC', async () => {
+  let providerCreated = false
+
+  class Provider {
+    constructor () {
+      providerCreated = true
+    }
+  }
+
+  await assert.rejects(
+    main(
+      { RPC_URL: 'https://rpc.example', TARGET_ADDRESS: 'not-an-address' },
+      { JsonRpcProvider: Provider },
+      { log: () => {} }
+    ),
+    /TARGET_ADDRESS must be a valid Ethereum address/
+  )
+  assert.equal(providerCreated, false)
+})
+
+test('detects deposits, withdrawals, and beacon chain withdrawals for target address', async () => {
+  const logged = []
+  const logger = {
+    log: (...args) => logged.push(args.join(' '))
+  }
+
+  const mockBlock = {
+    number: '0xa',
+    hash: '0xblockhash',
+    transactions: [
+      {
+        hash: '0xtx1',
+        from: '0x06EE840642a33367ee59fCA237F270d5119d1356',
+        to: '0xrecipient',
+        value: 1000000000000000000n
+      },
+      {
+        hash: '0xtx2',
+        from: '0xsender',
+        to: '0x06EE840642a33367ee59fCA237F270d5119d1356',
+        value: 2000000000000000000n
+      }
+    ],
+    withdrawals: [
+      {
+        address: '0x06EE840642a33367ee59fCA237F270d5119d1356',
+        amount: '0x3b9aca00' // 1 Gwei
+      }
+    ]
+  }
+
+  let sendCalled = false
+  class Provider {
+    async getBlockNumber () {
+      return 10
+    }
+
+    async send (method) {
+      if (method === 'eth_getBlockByNumber') {
+        sendCalled = true
+        return mockBlock
+      }
+    }
+  }
+
+  const deps = {
+    JsonRpcProvider: Provider,
+    toBeHex: (val) => '0x' + val.toString(16),
+    formatEther: (val) => (Number(val) / 1e18).toString(),
+    formatUnits: (val) => (Number(val) / 1e9).toString()
+  }
+
+  await main(
+    { RPC_URL: 'https://rpc.example', START_BLOCK: '10', END_BLOCK: '10' },
+    deps,
+    logger
+  )
+
+  assert.equal(sendCalled, true)
+  assert.ok(logged.some(line => line.includes('Checking blocks 10 to 10')))
+  assert.ok(logged.some(line => line.includes('Filtering for target address: 0x06ee840642a33367ee59fca237f270d5119d1356')))
+  assert.ok(logged.some(line => line.includes('MATCH - withdrawal from target address: 1 ETH to 0xrecipient')))
+  assert.ok(logged.some(line => line.includes('MATCH - deposit to target address: 2 ETH from 0xsender')))
+  assert.ok(logged.some(line => line.includes('MATCH - beacon chain withdrawal to target address: 1 ETH')))
+})
+
+test('falls back to getBlock when provider.send fails and supports custom TARGET_ADDRESS', async () => {
+  const logged = []
+  const logger = {
+    log: (...args) => logged.push(args.join(' '))
+  }
+
+  const mockBlock = {
+    number: 10,
+    hash: '0xblockhash',
+    prefetchedTransactions: [
+      {
+        hash: '0xtx1',
+        from: '0x0000000000000000000000000000000000000002',
+        to: '0xrecipient',
+        value: 1500000000000000000n
+      }
+    ]
+  }
+
+  let getBlockCalled = false
+  class Provider {
+    async getBlockNumber () {
+      return 10
+    }
+
+    async send () {
+      throw new Error('RPC send failed')
+    }
+
+    async getBlock (num, prefetch) {
+      if (num === 10 && prefetch === true) {
+        getBlockCalled = true
+        return mockBlock
+      }
+    }
+  }
+
+  const deps = {
+    JsonRpcProvider: Provider,
+    toBeHex: (val) => '0x' + val.toString(16),
+    formatEther: (val) => (Number(val) / 1e18).toString()
+  }
+
+  await main(
+    { RPC_URL: 'https://rpc.example', START_BLOCK: '10', END_BLOCK: '10', TARGET_ADDRESS: '0x0000000000000000000000000000000000000002' },
+    deps,
+    logger
+  )
+
+  assert.equal(getBlockCalled, true)
+  assert.ok(logged.some(line => line.includes('Filtering for target address: 0x0000000000000000000000000000000000000002')))
+  assert.ok(logged.some(line => line.includes('MATCH - withdrawal from target address: 1.5 ETH to 0xrecipient')))
+})
+
+test('calculates correct start block when END_BLOCK is specified but START_BLOCK is not', () => {
+  assert.deepEqual(getBlockRange({ BLOCK_COUNT: '3', END_BLOCK: '5' }, 10), {
+    endBlock: 5,
+    startBlock: 3
+  })
+})
+
+test('gracefully handles error when block.prefetchedTransactions throws', async () => {
+  const logged = []
+  const logger = {
+    log: (...args) => logged.push(args.join(' '))
+  }
+
+  const mockBlock = {
+    number: 10,
+    hash: '0xblockhash',
+    get prefetchedTransactions () {
+      throw new Error('prefetchedTransactions error')
+    },
+    transactions: [
+      {
+        hash: '0xtx1',
+        from: '0x06EE840642a33367ee59fCA237F270d5119d1356',
+        to: '0xrecipient',
+        value: 1000000000000000000n
+      }
+    ]
+  }
+
+  class Provider {
+    async getBlockNumber () {
+      return 10
+    }
+
+    async send () {
+      throw new Error('RPC send failed')
+    }
+
+    async getBlock () {
+      return mockBlock
+    }
+  }
+
+  const deps = {
+    JsonRpcProvider: Provider,
+    toBeHex: (val) => '0x' + val.toString(16),
+    formatEther: (val) => (Number(val) / 1e18).toString()
+  }
+
+  await main(
+    { RPC_URL: 'https://rpc.example', START_BLOCK: '10', END_BLOCK: '10' },
+    deps,
+    logger
+  )
+
+  assert.ok(logged.some(line => line.includes('MATCH - withdrawal from target address: 1 ETH to 0xrecipient')))
+})
+
+test('supports base-10 string withdrawal amounts in Gwei formatted to ETH', async () => {
+  const logged = []
+  const logger = {
+    log: (...args) => logged.push(args.join(' '))
+  }
+
+  const mockBlock = {
+    number: '0xa',
+    hash: '0xblockhash',
+    transactions: [],
+    withdrawals: [
+      {
+        address: '0x06EE840642a33367ee59fCA237F270d5119d1356',
+        amount: '3000000' // 3 million Gwei = 0.003 ETH
+      }
+    ]
+  }
+
+  class Provider {
+    async getBlockNumber () {
+      return 10
+    }
+
+    async send () {
+      return mockBlock
+    }
+  }
+
+  const deps = {
+    JsonRpcProvider: Provider,
+    toBeHex: (val) => '0x' + val.toString(16),
+    formatUnits: (val, dec) => (Number(val) / 10**dec).toString()
+  }
+
+  await main(
+    { RPC_URL: 'https://rpc.example', START_BLOCK: '10', END_BLOCK: '10' },
+    deps,
+    logger
+  )
+
+  assert.ok(logged.some(line => line.includes('MATCH - beacon chain withdrawal to target address: 0.003 ETH')))
+})
