@@ -12,8 +12,9 @@ import '../css/app.scss'
 import 'phoenix_html'
 import 'bootstrap'
 
-// Import Vercel Speed Insights
+// Import Vercel Speed Insights and Analytics
 import { injectSpeedInsights } from '@vercel/speed-insights'
+import { inject } from '@vercel/analytics'
 
 // Import local files
 //
@@ -44,5 +45,6 @@ import swal from 'sweetalert2'
 // @ts-ignore
 window.Swal = swal
 
-// Initialize Vercel Speed Insights
+// Initialize Vercel Speed Insights and Analytics
 injectSpeedInsights()
+inject()
